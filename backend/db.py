@@ -73,6 +73,54 @@ class TrackerRepository:
                 )
                 raise
 
+    def get_vehicle_snapshots(self):
+        """Restituisce i veicoli con posizione corrente per la dashboard web."""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            tracker.id,
+                            tracker.imei AS imei,
+                            tracker.last_seen,
+                            tracker.station_id,
+                            tracker.model_id,
+                            tracker_data.longitudine,
+                            tracker_data.latitudine,
+                            tracker_data.ts,
+                            tracker_data.km AS km,
+                            tracker_data.io_elements
+                        FROM tracker
+                        INNER JOIN tracker_data
+                            ON tracker_data.vehicle_id = tracker.id
+                        WHERE tracker_data.longitudine IS NOT NULL
+                          AND tracker_data.latitudine IS NOT NULL
+                        ORDER BY COALESCE(tracker_data.ts, tracker.last_seen) DESC, tracker.id ASC
+                        """
+                    )
+                    rows = cur.fetchall()
+            except Exception:
+                app_logger.log_system_event(
+                    level="ERROR",
+                    event_type="db_vehicle_query_failed",
+                    message="Query dashboard veicoli fallita.",
+                    component="db",
+                    details={"traceback": traceback.format_exc()},
+                )
+                raise
+
+        vehicles = [self.serialize_vehicle_snapshot(row) for row in rows]
+        app_logger.log_system_event(
+            level="INFO",
+            event_type="db_vehicle_query_completed",
+            message="Query dashboard veicoli completata.",
+            component="db",
+            details={"vehicle_count": len(vehicles)},
+        )
+        return vehicles
+
     def get_connection(self):
         """Apre la connessione al primo uso e la riapre se chiusa."""
         self.validate_config()
@@ -103,10 +151,44 @@ class TrackerRepository:
                 + ", ".join(missing)
             )
 
+    def serialize_vehicle_snapshot(self, row):
+        """Normalizza una riga SQL nel formato JSON atteso dal frontend."""
+        io_elements = row.get("io_elements") or {}
+        speed = self.parse_numeric_value(io_elements.get("speed"))
+        return {
+            "id": row["id"],
+            "imei": row["imei"],
+            "last_seen": self.serialize_datetime(row.get("last_seen")),
+            "latitudine": float(row["latitudine"]) if row.get("latitudine") is not None else None,
+            "longitudine": float(row["longitudine"]) if row.get("longitudine") is not None else None,
+            "ts": self.serialize_datetime(row.get("ts")),
+            "km": row.get("km"),
+            "speed": speed,
+            "station_id": row.get("station_id"),
+            "model_id": row.get("model_id"),
+        }
+
+    def serialize_datetime(self, value):
+        """Converte datetime Python in stringa ISO 8601."""
+        if value is None:
+            return None
+        if isinstance(value, datetime.datetime):
+            return value.isoformat()
+        return str(value)
+
+    def parse_numeric_value(self, value):
+        """Converte in intero i valori numerici ricevuti dal JSONB, con fallback a None."""
+        if value is None:
+            return None
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
     def upsert_tracker(self, cur, packet):
         """Restituisce l'id del tracker, creandolo se necessario."""
         cur.execute(
-            'SELECT id FROM tracker WHERE "IMEI" = %s',
+            "SELECT id FROM tracker WHERE imei = %s",
             (packet["imei"],),
         )
         tracker_row = cur.fetchone()
@@ -128,7 +210,7 @@ class TrackerRepository:
 
         cur.execute(
             """
-            INSERT INTO tracker ("IMEI", last_seen, station_id, model_id)
+            INSERT INTO tracker (imei, last_seen, station_id, model_id)
             VALUES (%s, %s, %s, %s)
             RETURNING id
             """,
@@ -160,7 +242,7 @@ class TrackerRepository:
                 SET longitudine = %s,
                     latitudine = %s,
                     ts = %s,
-                    "KM" = %s,
+                    km = %s,
                     io_elements = %s
                 WHERE vehicle_id = %s
                 """,
@@ -190,7 +272,7 @@ class TrackerRepository:
 
         cur.execute(
             """
-            INSERT INTO tracker_data (vehicle_id, longitudine, latitudine, ts, "KM", io_elements)
+            INSERT INTO tracker_data (vehicle_id, longitudine, latitudine, ts, km, io_elements)
             VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (

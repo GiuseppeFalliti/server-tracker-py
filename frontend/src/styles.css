@@ -1,0 +1,238 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap");
+
+:root {
+  color-scheme: light;
+  --bg: #f4efe6;
+  --panel: rgba(248, 242, 232, 0.9);
+  --panel-strong: #fff8ed;
+  --border: rgba(71, 52, 33, 0.14);
+  --text: #1f1a17;
+  --muted: #695a4b;
+  --accent: #c65c2f;
+  --accent-dark: #a34b25;
+  --shadow: 0 20px 50px rgba(72, 48, 21, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(198, 92, 47, 0.2), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(43, 121, 156, 0.16), transparent 30%),
+    var(--bg);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 390px) 1fr;
+  min-height: 100vh;
+  gap: 1.25rem;
+  padding: 1.25rem;
+}
+
+.sidebar,
+.map-panel {
+  min-height: calc(100vh - 2.5rem);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(255, 248, 237, 0.98), rgba(247, 239, 228, 0.95));
+}
+
+.sidebar__header {
+  padding: 1.5rem 1.5rem 0.75rem;
+}
+
+.sidebar__eyebrow {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+}
+
+.sidebar__header h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  line-height: 0.95;
+}
+
+.sidebar__copy {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  max-width: 28ch;
+}
+
+.sidebar__status {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+  padding: 0.75rem 1.5rem 1rem;
+}
+
+.sidebar__status div {
+  padding: 0.85rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(71, 52, 33, 0.09);
+}
+
+.status-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.state-banner {
+  margin: 0 1.5rem 1rem;
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
+  border: 1px solid rgba(71, 52, 33, 0.08);
+}
+
+.state-banner--error {
+  background: rgba(198, 92, 47, 0.12);
+  color: #6d2b10;
+  border-color: rgba(198, 92, 47, 0.2);
+}
+
+.vehicle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0 1.5rem 1.5rem;
+  overflow: auto;
+}
+
+.vehicle-card {
+  width: 100%;
+  text-align: left;
+  padding: 1rem;
+  border-radius: 20px;
+  border: 1px solid rgba(71, 52, 33, 0.08);
+  background: rgba(255, 255, 255, 0.62);
+  color: inherit;
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.vehicle-card:hover,
+.vehicle-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(198, 92, 47, 0.35);
+  box-shadow: 0 12px 28px rgba(83, 46, 21, 0.1);
+}
+
+.vehicle-card--selected {
+  border-color: rgba(198, 92, 47, 0.5);
+  background: linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(255, 239, 228, 0.85));
+}
+
+.vehicle-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.vehicle-card__imei {
+  margin: 0;
+  font-weight: 700;
+}
+
+.vehicle-card__meta {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.vehicle-card__speed {
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(198, 92, 47, 0.12);
+  color: var(--accent-dark);
+  font-size: 0.84rem;
+  white-space: nowrap;
+}
+
+.vehicle-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem 1rem;
+  margin: 1rem 0 0;
+}
+
+.vehicle-card__grid dt {
+  font-size: 0.76rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.12rem;
+}
+
+.vehicle-card__grid dd {
+  margin: 0;
+  font-size: 0.94rem;
+}
+
+.map-panel {
+  position: relative;
+  background: #e9e2d6;
+}
+
+.map-wrap,
+.fleet-map {
+  width: 100%;
+  height: 100%;
+}
+
+.fleet-map {
+  min-height: calc(100vh - 2.5rem);
+}
+
+.leaflet-container {
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.vehicle-popup p {
+  margin: 0.2rem 0;
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar,
+  .map-panel,
+  .fleet-map {
+    min-height: 50vh;
+  }
+}
