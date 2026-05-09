@@ -1,13 +1,8 @@
 """
-Decoder principale dei pacchetti AVL Teltonika in codec 8.
-
-Il modulo interpreta il payload esadecimale ricevuto dal tracker,
-estrae i campi principali di telemetria e delega la sezione I/O
-al decoder specializzato.
+Decoder completo dei pacchetti AVL Teltonika Codec 8 su TCP.
 """
 
 import datetime
-import math
 
 from IO_decoder import IODecoder
 from logger import app_logger
@@ -17,166 +12,248 @@ io = IODecoder()
 
 
 class avlDecoder():
-    """Parsa un pacchetto AVL e restituisce un dizionario con i dati utili."""
+    """Parsa un frame Codec 8 TCP e restituisce records e metadati."""
 
     def __init__(self):
-        self.raw_data = ""
-        self.initVars()
-
-    def initVars(self):
-        # Azzera lo stato interno per una nuova sessione di decodifica.
-        self.codecid = 0
-        self.no_records_i = 0
-        self.no_records_e = 0
-        self.crc_16 = 0
-        self.avl_entries = []
-        self.avl_latest = ""
-        self.d_time_unix = 0
-        self.d_time_local = ""
-        self.avl_io_raw = ""
-        self.priority = 0
-        self.lon = 0
-        self.lat = 0
-        self.alt = 0
-        self.angle = 0
-        self.satellites = 0
-        self.speed = 0
-        self.decoded_io = {}
+        self.raw_data = b""
 
     def decodeAVL(self, data):
-        # Il decoder lavora sulla stringa esadecimale del pacchetto ricevuto.
-        self.raw_data = data
-        self.data_field_l = int(data[8:16], 16) * 2
-        self.total_io_size = self.data_field_l - 4 - 2
-        self.io_end = 20 + self.total_io_size
-        self.codecid = int(data[16:18], 16)
-        self.no_record_i = int(data[18:20], 16)
-        self.no_record_e = int(data[-10:-8], 16)
-        self.crc_16 = int(data[-8:], 16)
-        self.first_io_start = 20
-        self.first_io_end = math.ceil(self.total_io_size / self.no_record_e)
+        """Decodifica un frame TCP Teltonika Codec 8."""
+        try:
+            self.raw_data = data
+            if len(data) < 12:
+                return self.invalid_packet("Frame troppo corto.", {"frame_length": len(data)})
 
-        # Il pacchetto e' valido solo se il codec e i due contatori dei record coincidono.
-        if self.codecid == 8 and (self.no_record_i == self.no_record_e):
-            record_entries = data[self.first_io_start:self.io_end]
+            preamble = data[:4]
+            if preamble != b"\x00\x00\x00\x00":
+                return self.invalid_packet("Preamble non valido.", {"preamble_hex": preamble.hex()})
 
-            entries_size = len(record_entries)
-            division_size = int(len(record_entries) / self.no_record_i)
-            self.avl_entries = []
+            data_field_length = int.from_bytes(data[4:8], byteorder="big")
+            expected_length = 8 + data_field_length + 4
+            if len(data) != expected_length:
+                return self.invalid_packet(
+                    "Lunghezza frame non coerente con data field length.",
+                    {
+                        "data_field_length": data_field_length,
+                        "frame_length": len(data),
+                        "expected_length": expected_length,
+                    },
+                )
+
+            codec_id = data[8]
+            if codec_id != 0x08:
+                return self.invalid_packet("Codec ID non supportato.", {"codec_id": codec_id})
+
+            record_count_1 = data[9]
+            payload_end = 8 + data_field_length
+            record_count_2 = data[payload_end - 1]
+            if record_count_1 != record_count_2:
+                return self.invalid_packet(
+                    "Number of Data mismatch.",
+                    {
+                        "record_count_1": record_count_1,
+                        "record_count_2": record_count_2,
+                    },
+                )
+
+            crc_received = int.from_bytes(data[payload_end:payload_end + 4], byteorder="big")
+            crc_calculated = self.crc16_ibm(data[8:payload_end])
+            if crc_calculated != (crc_received & 0xFFFF):
+                return self.invalid_packet(
+                    "CRC-16/IBM non valido.",
+                    {
+                        "crc_received": crc_received,
+                        "crc_received_low": crc_received & 0xFFFF,
+                        "crc_calculated": crc_calculated,
+                    },
+                )
+
+            cursor = 10
+            records = []
+            for _ in range(record_count_1):
+                record, cursor = self.parse_record(data, cursor)
+                if record == -1:
+                    return -1
+                records.append(record)
+
+            if cursor != payload_end - 1:
+                return self.invalid_packet(
+                    "Offset finale record non coerente con payload AVL.",
+                    {
+                        "cursor": cursor,
+                        "payload_end": payload_end - 1,
+                    },
+                )
+
+            primary_record = records[0]
+            packet = {
+                "codec_id": codec_id,
+                "record_count": record_count_1,
+                "record_count_confirmed": record_count_2,
+                "crc_received": crc_received,
+                "crc_valid": True,
+                "records": records,
+                "primary_record": self.to_legacy_record(primary_record, codec_id, record_count_1, record_count_2, crc_received),
+            }
+
             app_logger.log_system_event(
                 level="INFO",
-                event_type="decoder_record_layout",
-                message="Calcolato layout dei record AVL.",
+                event_type="decoder_packet_decoded",
+                message="Frame Codec 8 decodificato con successo.",
                 component="decoder",
                 details={
-                    "entries_size": entries_size,
-                    "division_size": division_size,
-                    "total_io_size": self.total_io_size,
-                    "record_count": self.no_record_e,
+                    "codec_id": codec_id,
+                    "record_count": record_count_1,
+                    "crc_valid": True,
+                },
+            )
+            return packet
+        except Exception as e:
+            return self.invalid_packet(
+                "Eccezione durante la decodifica del frame Codec 8.",
+                {
+                    "error": str(e),
                 },
             )
 
-            # Divide il blocco totale nei singoli record AVL.
-            for i in range(0, entries_size, division_size):
-                self.avl_entries.append(record_entries[i:i + division_size])
+    def parse_record(self, data, offset):
+        """Decodifica un singolo record AVL."""
+        try:
+            cursor = offset
+            timestamp_unix_ms = int.from_bytes(data[cursor:cursor + 8], byteorder="big")
+            cursor += 8
+            priority = data[cursor]
+            cursor += 1
+            lon = int.from_bytes(data[cursor:cursor + 4], byteorder="big", signed=True)
+            cursor += 4
+            lat = int.from_bytes(data[cursor:cursor + 4], byteorder="big", signed=True)
+            cursor += 4
+            alt = int.from_bytes(data[cursor:cursor + 2], byteorder="big", signed=False)
+            cursor += 2
+            angle = int.from_bytes(data[cursor:cursor + 2], byteorder="big", signed=False)
+            cursor += 2
+            satellites = data[cursor]
+            cursor += 1
+            speed = int.from_bytes(data[cursor:cursor + 2], byteorder="big", signed=False)
+            cursor += 2
 
-            # Il progetto usa il primo record del lotto come riferimento principale.
-            self.avl_latest = record_entries[0:self.first_io_end]
-            self.avl_latest_1 = self.avl_entries[0]
-            app_logger.log_system_event(
-                level="INFO",
-                event_type="decoder_primary_record_selected",
-                message="Selezionato il record AVL principale.",
-                component="decoder",
-                details={
-                    "primary_record": self.avl_latest,
-                    "first_split_record": self.avl_entries[0],
+            io_data, cursor = io.decode_from_record(data, cursor)
+            if io_data == -1:
+                return -1, offset
+
+            record = {
+                "sys_time": self.getDateTime(),
+                "d_time_unix": timestamp_unix_ms,
+                "d_time_local": self.unixtoLocal(timestamp_unix_ms),
+                "priority": priority,
+                "lon": lon,
+                "lat": lat,
+                "alt": alt,
+                "angle": angle,
+                "satellites": satellites,
+                "speed": speed,
+                "io_event_id": io_data["event_io_id"],
+                "io_total_count": io_data["total_io_count"],
+                "io_data": {
+                    "n1": io_data["n1"],
+                    "n2": io_data["n2"],
+                    "n4": io_data["n4"],
+                    "n8": io_data["n8"],
                 },
-            )
-
-            # Estrae i campi GPS e di stato dal primo record.
-            self.d_time_unix = int(self.avl_latest[0:16], 16)
-            self.d_time_local = self.unixtoLocal(self.d_time_unix)
-            self.priority = int(record_entries[16:18], 16)
-            self.lon = int(record_entries[18:26], 16)
-            self.lat = int(record_entries[26:34], 16)
-            self.alt = int(record_entries[34:38], 16)
-            self.angle = int(record_entries[38:42], 16)
-            self.satellites = int(record_entries[42:44], 16)
-            self.speed = int(record_entries[44:48], 16)
-
-            # Dopo i campi GPS rimane il blocco I/O da passare al decoder dedicato.
-            self.avl_io_raw = self.avl_latest[48:]
-            app_logger.log_system_event(
-                level="INFO",
-                event_type="decoder_io_payload_extracted",
-                message="Blocco I/O estratto dal pacchetto AVL.",
-                component="decoder",
-                details={"raw_io": self.avl_io_raw},
-            )
-
-            self.decoded_io = io.dataDecoder(self.avl_io_raw)
-            return self.getAvlData()
-        else:
-            # Ritorna -1 quando il pacchetto non rispetta il formato atteso.
+            }
+            return record, cursor
+        except Exception as e:
             app_logger.log_system_event(
                 level="ERROR",
-                event_type="decoder_invalid_packet",
-                message="Pacchetto AVL non valido per codec o numero record.",
+                event_type="decoder_record_failed",
+                message="Errore durante la decodifica di un record AVL.",
                 component="decoder",
                 details={
-                    "codec_id": self.codecid,
-                    "no_record_i": self.no_record_i,
-                    "no_record_e": self.no_record_e,
-                    "raw_data": data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data),
+                    "error": str(e),
+                    "offset": offset,
                 },
             )
-            return -1
+            return -1, offset
+
+    def to_legacy_record(self, record, codec_id, record_count_1, record_count_2, crc_received):
+        """Adatta il record primario al formato atteso dal resto del progetto."""
+        packet = record.copy()
+        packet.update(
+            {
+                "codecid": codec_id,
+                "no_record_i": record_count_1,
+                "no_record_e": record_count_2,
+                "crc-16": crc_received,
+            }
+        )
+        return packet
+
+    def invalid_packet(self, message, details):
+        app_logger.log_system_event(
+            level="ERROR",
+            event_type="decoder_invalid_packet",
+            message=message,
+            component="decoder",
+            details=details,
+        )
+        return -1
+
+    def crc16_ibm(self, payload):
+        """Calcola il CRC-16/IBM (ARC) sul payload indicato."""
+        crc = 0x0000
+        for byte in payload:
+            crc ^= byte
+            for _ in range(8):
+                if crc & 0x0001:
+                    crc = (crc >> 1) ^ 0xA001
+                else:
+                    crc >>= 1
+        return crc & 0xFFFF
 
     def getDateTime(self):
-        # Timestamp locale del server al momento della decodifica.
         return datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     def unixtoLocal(self, unix_time):
-        # I timestamp Teltonika sono espressi in millisecondi Unix.
         time = datetime.datetime.fromtimestamp(unix_time / 1000)
         return f"{time:%Y-%m-%d %H:%M:%S}"
 
-    def getAvlData(self):
-        # Restituisce una struttura pronta per essere loggata o inoltrata altrove.
-        data = {
-            "sys_time": self.getDateTime(),
-            "codecid": self.codecid,
-            "no_record_i": self.no_record_i,
-            "no_record_e": self.no_record_e,
-            "crc-16": self.crc_16,
-            "d_time_unix": self.d_time_unix,
-            "d_time_local": self.d_time_local,
-            "priority": self.priority,
-            "lon": self.lon,
-            "lat": self.lat,
-            "alt": self.alt,
-            "angle": self.angle,
-            "satellites": self.satellites,
-            "speed": self.speed,
-            "io_data": self.decoded_io
-        }
-        return data
-
     def getRawData(self):
-        # Espone il pacchetto grezzo in caso di debug o analisi successive.
         return self.raw_data
 
 
 if __name__ == "__main__":
-    # Campione reale di payload AVL usato per test del decoder.
-    data = b'00000000000004d2081d00000176ccb789480000000000000000000000000000000000060301000200b40002422dea430f150148000000000000000176ccb69ee80000000000000000000000000000000000060301000200b40002422de8430f150148000000000000000176ccb5b4880000000000000000000000000000000000060301000200b40002422de6430f160148000000000000000176ccb4ca280000000000000000000000000000000000060301000200b40002422de6430f130148000000000000000176ccb3dfc80000000000000000000000000000000000060301000200b40002422de6430f160148000000000000000176ccb2f5680000000000000000000000000000000000060301000200b40002422de6430f110148000000000000000176ccb20b080000000000000000000000000000000000060301000200b40002422de4430f110148000000000000000176cc96f1880000000000000000000000000000000000040301000200b400000148000000000000000176cc9607280000000000000000000000000000000000040301000200b400000148000000000000000176cc951cc80000000000000000000000000000000000040301000200b400000148000000000000000176cc9432680000000000000000000000000000000000040301000200b400000148000000000000000176cc9348080000000000000000000000000000000000040301000200b400000148000000000000000176cc925da80000000000000000000000000000000000040301000200b400000148000000000000000176cc9173480000000000000000000000000000000000040301000200b400000148000000000000000176cc900be80000000000000000000000000000000000040301000200b400000148000000000000000176cc8f96b80000000000000000000000000000000000040301000200b400000148000000000000000176cc8eac580000000000000000000000000000000000040301000200b400000148000000000000000176cc8d4cc80200000000000000000000000000000002040301000200b400000148000000000000000176cc8d06780000000000000000000000000000000000040301000200b400000148000000000000000176cc8c1c180000000000000000000000000000000000040301000200b400000148000000000000000176cc8b31b80000000000000000000000000000000000040301000200b400000148000000000000000176cc8a47580000000000000000000000000000000000040301000200b400000148000000000000000176cc895cf80000000000000000000000000000000000040301000200b400000148000000000000000176cc8872980000000000000000000000000000000000040301000200b400000148000000000000000176cc8788380000000000000000000000000000000000040301000200b400000148000000000000000176cc869dd80000000000000000000000000000000000040301000200b400000148000000000000000176cc85b3780000000000000000000000000000000000040301000200b400000148000000000000000176cc84c9180000000000000000000000000000000000040301000200b400000148000000000000000176cc83deb80000000000000000000000000000000000040301000200b40000014800000000001d000027ca'
-    avl = avlDecoder()
-    res = avl.decodeAVL(data)
+    sample_hex = (
+        "00000000000004d2081d00000176ccb789480000000000000000000000000000000000060301000200b40002422dea430f150148"
+        "000000000000000176ccb69ee80000000000000000000000000000000000060301000200b40002422de8430f150148000000000000"
+        "000176ccb5b4880000000000000000000000000000000000060301000200b40002422de6430f160148000000000000000176ccb4ca"
+        "280000000000000000000000000000000000060301000200b40002422de6430f130148000000000000000176ccb3dfc80000000000"
+        "000000000000000000000000060301000200b40002422de6430f160148000000000000000176ccb2f5680000000000000000000000"
+        "000000000000060301000200b40002422de6430f110148000000000000000176ccb20b080000000000000000000000000000000000"
+        "060301000200b40002422de4430f110148000000000000000176cc96f1880000000000000000000000000000000000040301000200"
+        "b400000148000000000000000176cc9607280000000000000000000000000000000000040301000200b40000014800000000000000"
+        "0176cc951cc80000000000000000000000000000000000040301000200b400000148000000000000000176cc943268000000000000"
+        "0000000000000000000000040301000200b400000148000000000000000176cc934808000000000000000000000000000000000004"
+        "0301000200b400000148000000000000000176cc925da80000000000000000000000000000000000040301000200b4000001480000"
+        "00000000000176cc9173480000000000000000000000000000000000040301000200b400000148000000000000000176cc900be800"
+        "00000000000000000000000000000000040301000200b400000148000000000000000176cc8f96b800000000000000000000000000"
+        "00000000040301000200b400000148000000000000000176cc8eac580000000000000000000000000000000000040301000200b400"
+        "000148000000000000000176cc8d4cc80200000000000000000000000000000002040301000200b400000148000000000000000176"
+        "cc8d06780000000000000000000000000000000000040301000200b400000148000000000000000176cc8c1c180000000000000000"
+        "000000000000000000040301000200b400000148000000000000000176cc8b31b80000000000000000000000000000000000040301"
+        "000200b400000148000000000000000176cc8a47580000000000000000000000000000000000040301000200b40000014800000000"
+        "0000000176cc895cf80000000000000000000000000000000000040301000200b400000148000000000000000176cc887298000000"
+        "0000000000000000000000000000040301000200b400000148000000000000000176cc878838000000000000000000000000000000"
+        "0000040301000200b400000148000000000000000176cc869dd80000000000000000000000000000000000040301000200b4000001"
+        "48000000000000000176cc85b3780000000000000000000000000000000000040301000200b400000148000000000000000176cc84"
+        "c9180000000000000000000000000000000000040301000200b400000148000000000000000176cc83deb800000000000000000000"
+        "00000000000000040301000200b40000014800000000001d000027ca"
+    )
+    decoder = avlDecoder()
+    result = decoder.decodeAVL(bytes.fromhex(sample_hex))
     app_logger.log_system_event(
         level="INFO",
         event_type="decoder_sample_decoded",
         message="Campione AVL decodificato.",
         component="decoder",
-        details=res,
+        details=result,
     )

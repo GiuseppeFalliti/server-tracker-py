@@ -6,11 +6,9 @@ risponde con l'ack di handshake e poi elabora i pacchetti AVL
 confermando al tracker il numero di record ricevuti.
 """
 
-import binascii
 import datetime
 import socket
 import threading
-import time
 import traceback
 
 from avlDecoder import avlDecoder
@@ -87,8 +85,7 @@ class TCPServer():
     def Communicator(self, conn, imei, addr):
         try:
             # Il byte 0x01 comunica al tracker che l'IMEI e' stato accettato.
-            accept_con_mes = '\x01'
-            conn.send(accept_con_mes.encode('utf-8'))
+            conn.send(b"\x01")
             app_logger.log_tracker_event(
                 imei=imei,
                 level="INFO",
@@ -99,8 +96,8 @@ class TCPServer():
             )
 
             while True:
-                data = conn.recv(1024)
-                if not data:
+                data = self.recv_avl_packet(conn)
+                if data is None:
                     app_logger.log_tracker_event(
                         imei=imei,
                         level="INFO",
@@ -111,9 +108,7 @@ class TCPServer():
                     )
                     break
 
-                vars = {}
-                recieved = self.decoder(data)
-                raw_hex = recieved.decode('utf-8')
+                raw_hex = data.hex()
                 app_logger.log_tracker_event(
                     imei=imei,
                     level="INFO",
@@ -125,8 +120,8 @@ class TCPServer():
                 )
 
                 # Decodifica il pacchetto AVL e associa l'IMEI gia' letto.
-                vars = avl_decoder.decodeAVL(recieved)
-                if vars == -1:
+                decoded_packet = avl_decoder.decodeAVL(data)
+                if decoded_packet == -1:
                     app_logger.log_tracker_event(
                         imei=imei,
                         level="ERROR",
@@ -138,6 +133,7 @@ class TCPServer():
                     )
                     raise ValueError("Pacchetto AVL non valido ricevuto dal tracker.")
 
+                vars = decoded_packet["primary_record"].copy()
                 vars['imei'] = imei
                 app_logger.log_tracker_event(
                     imei=imei,
@@ -148,8 +144,8 @@ class TCPServer():
                     client_addr=addr,
                     details={
                         "raw_hex": raw_hex,
-                        "packet": vars,
-                        "record_count": vars["no_record_i"],
+                        "packet": decoded_packet,
+                        "record_count": decoded_packet["record_count"],
                     },
                 )
 
@@ -162,12 +158,11 @@ class TCPServer():
                     message="Pacchetto tracker salvato su PostgreSQL.",
                     component="server",
                     client_addr=addr,
-                    details={"record_count": vars["no_record_i"]},
+                    details={"record_count": decoded_packet["record_count"]},
                 )
 
                 # Il protocollo richiede la conferma del numero di record accettati.
-                resp = self.mResponse(vars['no_record_i'])
-                time.sleep(30)
+                resp = self.mResponse(decoded_packet["record_count"])
                 conn.send(resp)
                 app_logger.log_tracker_event(
                     imei=imei,
@@ -177,7 +172,7 @@ class TCPServer():
                     component="server",
                     client_addr=addr,
                     details={
-                        "record_count": vars["no_record_i"],
+                        "record_count": decoded_packet["record_count"],
                         "ack_hex": resp.hex(),
                     },
                 )
@@ -216,9 +211,8 @@ class TCPServer():
         connected = True
         while connected:
             try:
-                imei_data = conn.recv(1024)
-                if imei_data:
-                    imei = self.extract_imei(imei_data)
+                imei = self.read_imei(conn)
+                if imei:
                     app_logger.log_tracker_event(
                         imei=imei,
                         level="INFO",
@@ -226,7 +220,7 @@ class TCPServer():
                         message="IMEI tracker ricevuto dal server TCP.",
                         component="server",
                         client_addr=addr,
-                        details={"raw_imei": imei_data.decode('utf-8', errors='replace')},
+                        details={"imei_length": len(imei)},
                     )
                     self.Communicator(conn, imei, addr)
                     connected = False
@@ -258,16 +252,41 @@ class TCPServer():
         except OSError:
             pass
 
-    def decoder(self, raw):
-        # Converte il frame binario in stringa esadecimale per il decoder AVL.
-        decoded = binascii.hexlify(raw)
-        return decoded
+    def recv_exact(self, conn, size):
+        """Legge esattamente `size` byte dal socket o ritorna None se chiuso."""
+        chunks = []
+        remaining = size
+        while remaining > 0:
+            chunk = conn.recv(remaining)
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
 
-    def extract_imei(self, imei_data):
-        decoded_imei = imei_data.decode('utf-8', errors='replace')
-        if "\x0f" in decoded_imei:
-            return decoded_imei.split("\x0f", 1)[1]
-        return decoded_imei.strip()
+    def read_imei(self, conn):
+        """Legge l'IMEI nel formato Teltonika: 2 byte length + ASCII."""
+        length_bytes = self.recv_exact(conn, 2)
+        if length_bytes is None:
+            return None
+        imei_length = int.from_bytes(length_bytes, byteorder="big")
+        if imei_length <= 0:
+            raise ValueError("Lunghezza IMEI non valida.")
+        imei_bytes = self.recv_exact(conn, imei_length)
+        if imei_bytes is None:
+            return None
+        return imei_bytes.decode("ascii")
+
+    def recv_avl_packet(self, conn):
+        """Legge un frame AVL TCP completo secondo la lunghezza dichiarata."""
+        header = self.recv_exact(conn, 8)
+        if header is None:
+            return None
+        data_field_length = int.from_bytes(header[4:8], byteorder="big")
+        remaining = self.recv_exact(conn, data_field_length + 4)
+        if remaining is None:
+            return None
+        return header + remaining
 
     def getDateTime(self):
         # Timestamp locale del server, utile per eventuali log operativi.

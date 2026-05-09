@@ -1,27 +1,116 @@
 # Server TCP Tracker Teltonika
 
-Server TCP in Python per ricevere i pacchetti AVL dei tracker Teltonika, decodificarli, salvarli su PostgreSQL e registrare log strutturati JSON per server e dispositivi.
+Server TCP in Python per tracker Teltonika con parser completo `Codec 8 TCP`, persistenza su PostgreSQL e logging JSON strutturato per server e dispositivi.
+
+## Panoramica
+
+Il progetto implementa un listener TCP pensato per rimanere attivo h24 e gestire il flusso reale dei tracker Teltonika:
+
+1. ricezione dell'`IMEI handshake`
+2. risposta di accettazione `0x01`
+3. ricezione del frame AVL completo
+4. validazione del frame `Codec 8 TCP`
+5. decodifica dei record AVL e dei blocchi I/O
+6. salvataggio su PostgreSQL
+7. invio dell'ACK finale con il `record count`
+8. scrittura dei log JSON globali e per tracker
 
 ## Funzionalita'
 
-- ascolto TCP continuo per tracker Teltonika
-- handshake IMEI con risposta `0x01`
-- decodifica pacchetti AVL codec 8
-- parsing dei dati I/O
-- salvataggio su PostgreSQL
+- ascolto TCP continuo sulla porta configurata nel codice
+- parsing completo `Codec 8 TCP`
+- lettura IMEI nel formato `2 byte length + ASCII IMEI`
+- lettura frame-aware dal socket con `recv_exact`
+- validazione di `preamble`, `codec id`, `record count` e `CRC-16/IBM`
+- supporto ai record multipli nello stesso frame AVL
+- parsing dei blocchi I/O `N1`, `N2`, `N4`, `N8`
+- salvataggio su PostgreSQL delle informazioni correnti del tracker
+- salvataggio del payload AVL normalizzato in `tracker_data.io_elements`
 - logging JSON Lines globale e per singolo tracker
 - esecuzione persistente con PM2 su Windows
 
 ## Flusso di funzionamento
 
 1. Il tracker apre una connessione TCP verso il server.
-2. Il server riceve l'IMEI del dispositivo.
-3. Il server accetta l'handshake inviando `0x01`.
-4. Il tracker invia i pacchetti AVL.
-5. Il server decodifica GPS, timestamp e blocchi I/O.
-6. I dati vengono salvati su PostgreSQL.
-7. Il server invia l'ACK con il numero di record ricevuti.
-8. Tutti gli eventi vengono scritti nei log JSON.
+2. Il server legge i primi 2 byte della lunghezza IMEI.
+3. Il server legge esattamente i byte ASCII dell'IMEI.
+4. Il server accetta l'handshake inviando `0x01`.
+5. Il server legge il frame AVL TCP completo:
+   - `preamble`
+   - `data field length`
+   - `codec id`
+   - `number of data 1`
+   - record AVL
+   - `number of data 2`
+   - `CRC`
+6. Il decoder valida:
+   - `preamble = 00000000`
+   - `codec id = 0x08`
+   - coerenza tra i due `number of data`
+   - `CRC-16/IBM`
+7. Il decoder estrae tutti i record del frame e costruisce:
+   - `records`
+   - `record_count`
+   - `crc_valid`
+   - `primary_record`
+8. Il server salva su database il `primary_record` del pacchetto, mantenendo nei log e nel decoder la visibilita' del batch completo.
+9. Il server invia al tracker l'ACK finale come intero big-endian a 4 byte con il numero di record accettati.
+
+## Protocollo Codec 8 TCP
+
+### IMEI handshake
+
+Il tracker si presenta con un frame iniziale composto da:
+
+```text
+[2 byte lunghezza IMEI][IMEI ASCII]
+```
+
+Esempio logico:
+
+```text
+000F333532303933303831343239313530
+```
+
+- `000F`: lunghezza IMEI = 15
+- il resto e' l'IMEI ASCII
+
+Se l'IMEI viene accettato, il server risponde con:
+
+```text
+01
+```
+
+### AVL frame
+
+Dopo l'handshake, il tracker invia un frame AVL TCP nel formato:
+
+```text
+[preamble][data field length][codec id][number of data 1][AVL data ...][number of data 2][CRC]
+```
+
+Significato dei campi principali:
+
+- `preamble`: sempre `00000000`
+- `data field length`: lunghezza del blocco dati dal `codec id` fino al secondo `number of data`
+- `codec id`: per questo progetto deve essere `0x08`
+- `number of data 1`: numero record dichiarato all'inizio del payload
+- `number of data 2`: numero record dichiarato alla fine del payload
+- `CRC`: checksum del payload verificato con `CRC-16/IBM`
+
+### ACK finale
+
+Dopo la validazione e l'elaborazione del frame, il server risponde con:
+
+```text
+000000<record_count>
+```
+
+Esempio per `29` record accettati:
+
+```text
+0000001D
+```
 
 ## Struttura del progetto
 
@@ -50,42 +139,81 @@ server_py/
 
 ### `main.py`
 
-Entry point del server TCP. Gestisce:
+E' l'entry point del server TCP. Si occupa di:
 
-- apertura del socket
-- accettazione delle connessioni
-- ricezione IMEI
-- ricezione dei pacchetti AVL
-- invio ACK al tracker
-- coordinamento tra decoder, database e logger
+- apertura del socket server
+- ascolto e accettazione delle connessioni
+- lettura dell'IMEI con parsing binario rigoroso
+- lettura del frame AVL completo tramite `recv_exact`
+- invocazione del decoder `Codec 8 TCP`
+- persistenza su PostgreSQL
+- invio dell'ACK finale al tracker
+- logging degli eventi di rete e di protocollo
+
+### `avlDecoder.py`
+
+Implementa il parser completo del frame `Codec 8 TCP`.
+
+Funzioni principali:
+
+- verifica del `preamble`
+- verifica del `codec id`
+- verifica della coerenza del `record count`
+- verifica del `CRC-16/IBM`
+- parsing sequenziale dei record AVL
+- gestione di record multipli nello stesso frame
+
+Il decoder restituisce una struttura con:
+
+- `records`
+- `record_count`
+- `record_count_confirmed`
+- `crc_received`
+- `crc_valid`
+- `primary_record`
+
+### `IO_decoder.py`
+
+Decodifica la sezione I/O del record AVL secondo la struttura ufficiale del `Codec 8`:
+
+- `event_io_id`
+- `total_io_count`
+- gruppo `N1`
+- gruppo `N2`
+- gruppo `N4`
+- gruppo `N8`
+
+Ogni gruppo viene interpretato con dimensioni valore coerenti con la specifica Teltonika.
 
 ### `db.py`
 
-Gestisce la connessione PostgreSQL e il salvataggio dei dati nelle tabelle:
+Gestisce la connessione PostgreSQL e aggiorna le tabelle applicative:
 
 - `tracker`
 - `tracker_data`
 
+Persistenza principale:
+
+- `IMEI`
+- `last_seen`
+- `longitudine`
+- `latitudine`
+- `ts`
+- `KM`
+- `io_elements` (`jsonb`)
+
+La colonna `io_elements` contiene il payload AVL normalizzato:
+
+- campi principali del record
+- blocchi I/O raw appiattiti come `io_raw_*`
+- blocchi I/O nominati come `io_name_*`
+
 ### `logger.py`
 
-Scrive eventi in formato JSON Lines:
+Scrive eventi JSON Lines in modo strutturato e thread-safe:
 
 - `logs/system.json` per il log globale del server
-- `logs/<IMEI>/YYYY-MM-DD.json` per i log giornalieri dei tracker
-
-### `avlDecoder.py`
-
-Decodifica il pacchetto AVL principale e restituisce:
-
-- timestamp
-- coordinate
-- velocita'
-- priorita'
-- dati I/O decodificati
-
-### `IO_decoder.py`
-
-Parsa i gruppi I/O `n1`, `n2`, `n4`, `n8` contenuti nel payload AVL.
+- `logs/<IMEI>/YYYY-MM-DD.json` per il log giornaliero di ogni tracker
 
 ### `avlMatcher.py`
 
@@ -93,7 +221,7 @@ Converte gli AVL ID numerici in nomi leggibili usando `avlIds.json`.
 
 ## Database PostgreSQL
 
-Il progetto usa le variabili d'ambiente definite in `.env`.
+Il progetto legge la configurazione da `.env`.
 
 Esempio:
 
@@ -105,9 +233,9 @@ PGPASSWORD=your_password
 PGPORT=5432
 ```
 
-Tabelle attese:
+### Tabelle attese
 
-### `tracker`
+#### `tracker`
 
 - `id`
 - `IMEI`
@@ -115,7 +243,7 @@ Tabelle attese:
 - `station_id`
 - `model_id`
 
-### `tracker_data`
+#### `tracker_data`
 
 - `id`
 - `vehicle_id`
@@ -123,14 +251,15 @@ Tabelle attese:
 - `latitudine`
 - `ts`
 - `KM`
+- `io_elements`
 
 ## Sistema di logging
 
-Il logging e' strutturato e persistente.
+Il logging e' strutturato in formato JSON Lines.
 
 ### Log globale
 
-File:
+Percorso:
 
 ```text
 logs/system.json
@@ -138,12 +267,18 @@ logs/system.json
 
 Contiene eventi di:
 
-- startup e shutdown
-- nuove connessioni
+- startup e shutdown del server
+- nuove connessioni TCP
+- ricezione IMEI
+- ricezione dei frame AVL
+- esito del decode
+- persistenza su database
+- invio ACK
 - errori di rete
-- salvataggi database
 - errori applicativi
-- eventi dei tracker
+- errori di framing
+- mismatch del `record count`
+- `CRC` invalido
 
 ### Log per tracker
 
@@ -153,9 +288,7 @@ Percorso:
 logs/<IMEI>/YYYY-MM-DD.json
 ```
 
-Ogni file contiene una riga JSON per evento.
-
-Campi tipici:
+Ogni riga e' un evento JSON autonomo. I campi tipici sono:
 
 - `timestamp`
 - `level`
@@ -189,7 +322,7 @@ Il progetto include una configurazione PM2 pronta:
 C:\Users\Admin\AppData\Roaming\npm\pm2.cmd start ecosystem.config.js
 ```
 
-Per i dettagli operativi completi, consulta:
+Per la gestione completa del processo, consulta:
 
 - [PM2_GUIDE.md](PM2_GUIDE.md)
 
@@ -203,7 +336,10 @@ Per i dettagli operativi completi, consulta:
 
 ## Note operative
 
-- I log applicativi stanno in `logs/`
-- I log tecnici di PM2 stanno in `pm2-logs/`
-- Il server e' pensato per restare attivo h24
-- Per l'avvio automatico dopo reboot su Windows, consulta `PM2_GUIDE.md`
+- il parser supportato e' `Codec 8 TCP`
+- il server valida il frame prima di inviare l'ACK
+- il database mantiene lo stato corrente del tracker, non uno storico completo dei record
+- i log applicativi stanno in `logs/`
+- i log tecnici di PM2 stanno in `pm2-logs/`
+- il server e' pensato per restare attivo h24
+- per l'avvio automatico dopo reboot su Windows, consulta `PM2_GUIDE.md`
