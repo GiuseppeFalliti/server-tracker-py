@@ -260,3 +260,4 @@ Percorsi:
 
 - `logs/system.json`
 - `logs/<IMEI>/YYYY-MM-DD.json`
+cloudflared tunnel --url http://localhost:8000
