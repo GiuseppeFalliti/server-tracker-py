@@ -8,11 +8,12 @@ campi utili al database e mantiene aggiornate le tabelle `tracker` e
 
 import datetime
 import os
+import re
 import threading
 import traceback
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from dotenv import load_dotenv
 
 from avlMatcher import avlIdMatcher
@@ -159,7 +160,8 @@ class TrackerRepository:
                 SET longitudine = %s,
                     latitudine = %s,
                     ts = %s,
-                    "KM" = %s
+                    "KM" = %s,
+                    io_elements = %s
                 WHERE vehicle_id = %s
                 """,
                 (
@@ -167,6 +169,7 @@ class TrackerRepository:
                     packet["latitudine"],
                     packet["ts"],
                     packet["km"],
+                    Json(packet["io_elements"]),
                     tracker_id,
                 ),
             )
@@ -176,14 +179,19 @@ class TrackerRepository:
                 event_type="db_tracker_data_updated",
                 message="Snapshot tracker_data aggiornato.",
                 component="db",
-                details={"tracker_id": tracker_id},
+                details={
+                    "tracker_id": tracker_id,
+                    "io_elements_keys": len(packet["io_elements"]),
+                    "has_raw_io": packet["has_raw_io"],
+                    "has_named_io": packet["has_named_io"],
+                },
             )
             return
 
         cur.execute(
             """
-            INSERT INTO tracker_data (vehicle_id, longitudine, latitudine, ts, "KM")
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO tracker_data (vehicle_id, longitudine, latitudine, ts, "KM", io_elements)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
                 tracker_id,
@@ -191,6 +199,7 @@ class TrackerRepository:
                 packet["latitudine"],
                 packet["ts"],
                 packet["km"],
+                Json(packet["io_elements"]),
             ),
         )
         app_logger.log_tracker_event(
@@ -199,12 +208,20 @@ class TrackerRepository:
             event_type="db_tracker_data_inserted",
             message="Snapshot tracker_data creato.",
             component="db",
-            details={"tracker_id": tracker_id},
+            details={
+                "tracker_id": tracker_id,
+                "io_elements_keys": len(packet["io_elements"]),
+                "has_raw_io": packet["has_raw_io"],
+                "has_named_io": packet["has_named_io"],
+            },
         )
 
     def normalize_packet(self, raw_data):
         """Prepara i campi nel formato atteso dallo schema SQL."""
-        io = self.id_to_avl(raw_data.get("io_data", {}))
+        named_io = self.id_to_avl(raw_data.get("io_data", {}))
+        flat_raw_io = self.flatten_raw_io(raw_data.get("io_data", {}))
+        flat_named_io = self.flatten_named_io(named_io)
+        io_elements = self.build_io_elements(raw_data, flat_raw_io, flat_named_io)
 
         return {
             "imei": raw_data["imei"],
@@ -212,7 +229,10 @@ class TrackerRepository:
             "longitudine": raw_data["lon"] / 10000000,
             "latitudine": raw_data["lat"] / 10000000,
             "ts": self.resolve_packet_timestamp(raw_data),
-            "km": self.extract_km(io),
+            "km": self.extract_km(named_io),
+            "io_elements": io_elements,
+            "has_raw_io": bool(flat_raw_io),
+            "has_named_io": bool(flat_named_io),
         }
 
     def resolve_packet_timestamp(self, raw_data):
@@ -252,6 +272,52 @@ class TrackerRepository:
                 if isinstance(avl_info, dict):
                     formatted[avl_info["name"]] = value
         return formatted
+
+    def flatten_raw_io(self, data):
+        """Appiattisce i gruppi I/O grezzi in chiavi stabili."""
+        flattened = {}
+        for group_name, group_values in data.items():
+            for avl_id, value in group_values.items():
+                flattened[f"io_raw_{group_name}_{avl_id}"] = value
+        return flattened
+
+    def flatten_named_io(self, named_io):
+        """Appiattisce gli elementi I/O nominati con chiavi normalizzate."""
+        flattened = {}
+        for name, value in named_io.items():
+            normalized_name = self.normalize_io_key(name)
+            flattened[f"io_name_{normalized_name}"] = value
+        return flattened
+
+    def build_io_elements(self, raw_data, flat_raw_io, flat_named_io):
+        """Costruisce l'oggetto JSONB piatto con tutti gli elementi AVL."""
+        avl_fields = {
+            "imei": raw_data.get("imei"),
+            "sys_time": raw_data.get("sys_time"),
+            "codecid": raw_data.get("codecid"),
+            "no_record_i": raw_data.get("no_record_i"),
+            "no_record_e": raw_data.get("no_record_e"),
+            "crc-16": raw_data.get("crc-16"),
+            "d_time_unix": raw_data.get("d_time_unix"),
+            "d_time_local": raw_data.get("d_time_local"),
+            "priority": raw_data.get("priority"),
+            "lon": raw_data.get("lon"),
+            "lat": raw_data.get("lat"),
+            "alt": raw_data.get("alt"),
+            "angle": raw_data.get("angle"),
+            "satellites": raw_data.get("satellites"),
+            "speed": raw_data.get("speed"),
+        }
+        avl_fields.update(flat_raw_io)
+        avl_fields.update(flat_named_io)
+        return avl_fields
+
+    def normalize_io_key(self, value):
+        """Rende stabili e sicure le chiavi dei campi I/O nominati."""
+        normalized = value.strip().lower()
+        normalized = re.sub(r"[^a-z0-9]+", "_", normalized)
+        normalized = re.sub(r"_+", "_", normalized)
+        return normalized.strip("_")
 
 
 if __name__ == "__main__":
