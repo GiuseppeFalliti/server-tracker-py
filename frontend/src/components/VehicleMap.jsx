@@ -39,13 +39,7 @@ function MapViewportController({ vehicles, selectedVehicle }) {
 
     if (vehicles.length === 0) {
       map.setView(DEFAULT_CENTER, 6);
-      return;
     }
-
-    const bounds = L.latLngBounds(
-      vehicles.map((vehicle) => [vehicle.latitudine, vehicle.longitudine]),
-    );
-    map.fitBounds(bounds, { padding: [48, 48] });
   }, [map, selectedVehicle, vehicles]);
 
   return null;
