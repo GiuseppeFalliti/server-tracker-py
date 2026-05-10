@@ -6,11 +6,11 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("it-IT");
 }
 
-function formatNumber(value, digits = 5) {
-  if (value === null || value === undefined) {
+function formatText(value) {
+  if (value === null || value === undefined || value === "") {
     return "--";
   }
-  return Number(value).toFixed(digits);
+  return value;
 }
 
 export default function VehicleSidebar({ vehicles, selectedVehicleId, onSelectVehicle }) {
@@ -42,11 +42,11 @@ export default function VehicleSidebar({ vehicles, selectedVehicleId, onSelectVe
               </div>
               <div>
                 <dt>Marca</dt>
-                <dd>{formatDate(vehicle.marca)}</dd>
+                <dd>{formatText(vehicle.marca)}</dd>
               </div>
               <div>
                 <dt>Modello</dt>
-                <dd>{formatDate(vehicle.model)}</dd>
+                <dd>{formatText(vehicle.model)}</dd>
               </div>
               <div>
                 <dt>KM</dt>

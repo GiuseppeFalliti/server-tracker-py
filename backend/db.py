@@ -171,6 +171,8 @@ class TrackerRepository:
             "ts": self.serialize_datetime(row.get("ts")),
             "km": row.get("km"),
             "speed": speed,
+            "marca": row.get("marca"),
+            "model": row.get("model"),
             "station_id": row.get("station_id"),
             "model_id": row.get("model_id"),
         }
