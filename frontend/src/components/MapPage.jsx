@@ -16,6 +16,7 @@ function sortVehicles(vehicles) {
 export default function MapPage() {
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState(null);
+  const [mapFocusRequest, setMapFocusRequest] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -76,6 +77,11 @@ export default function MapPage() {
     [selectedVehicleId, vehicles],
   );
 
+  function handleVehicleSelection(vehicleId) {
+    setSelectedVehicleId(vehicleId);
+    setMapFocusRequest((currentValue) => currentValue + 1);
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -111,15 +117,16 @@ export default function MapPage() {
         <VehicleSidebar
           vehicles={vehicles}
           selectedVehicleId={selectedVehicleId}
-          onSelectVehicle={setSelectedVehicleId}
+          onSelectVehicle={handleVehicleSelection}
         />
       </aside>
 
       <section className="map-panel">
         <VehicleMap
           vehicles={vehicles}
+          mapFocusRequest={mapFocusRequest}
           selectedVehicle={selectedVehicle}
-          onSelectVehicle={setSelectedVehicleId}
+          onSelectVehicle={handleVehicleSelection}
         />
       </section>
     </main>

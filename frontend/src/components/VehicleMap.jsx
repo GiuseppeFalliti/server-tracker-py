@@ -21,7 +21,7 @@ L.Icon.Default.mergeOptions({
 
 const DEFAULT_CENTER = [41.9028, 12.4964];
 
-function MapViewportController({ vehicles, selectedVehicle }) {
+function MapViewportController({ vehicles, selectedVehicle, mapFocusRequest }) {
   const map = useMap();
 
   useEffect(() => {
@@ -30,10 +30,28 @@ function MapViewportController({ vehicles, selectedVehicle }) {
     }
   }, [map, vehicles.length]);
 
+  useEffect(() => {
+    if (
+      !selectedVehicle ||
+      selectedVehicle.latitudine === null ||
+      selectedVehicle.latitudine === undefined ||
+      selectedVehicle.longitudine === null ||
+      selectedVehicle.longitudine === undefined
+    ) {
+      return;
+    }
+
+    map.setView(
+      [selectedVehicle.latitudine, selectedVehicle.longitudine],
+      Math.max(map.getZoom(), 13),
+      { animate: true },
+    );
+  }, [map, mapFocusRequest, selectedVehicle]);
+
   return null;
 }
 
-export default function VehicleMap({ vehicles, selectedVehicle, onSelectVehicle }) {
+export default function VehicleMap({ vehicles, mapFocusRequest, selectedVehicle, onSelectVehicle }) {
   const popupRefs = useRef(new Map());
 
   const positions = useMemo(
@@ -66,7 +84,11 @@ export default function VehicleMap({ vehicles, selectedVehicle, onSelectVehicle 
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        <MapViewportController vehicles={positions} selectedVehicle={selectedVehicle} />
+        <MapViewportController
+          vehicles={positions}
+          mapFocusRequest={mapFocusRequest}
+          selectedVehicle={selectedVehicle}
+        />
 
         {positions.map((vehicle) => (
           <Marker
