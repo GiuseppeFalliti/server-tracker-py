@@ -25,22 +25,10 @@ function MapViewportController({ vehicles, selectedVehicle }) {
   const map = useMap();
 
   useEffect(() => {
-    if (
-      selectedVehicle?.latitudine !== null &&
-      selectedVehicle?.latitudine !== undefined &&
-      selectedVehicle?.longitudine !== null &&
-      selectedVehicle?.longitudine !== undefined
-    ) {
-      map.setView([selectedVehicle.latitudine, selectedVehicle.longitudine], Math.max(map.getZoom(), 13), {
-        animate: true,
-      });
-      return;
-    }
-
     if (vehicles.length === 0) {
       map.setView(DEFAULT_CENTER, 6);
     }
-  }, [map, selectedVehicle, vehicles]);
+  }, [map, vehicles.length]);
 
   return null;
 }
