@@ -221,20 +221,30 @@ select {
   font-family: "Space Grotesk", sans-serif;
 }
 
+.vehicle-popup-shell .leaflet-popup-content-wrapper,
 .leaflet-popup-content-wrapper {
   border-radius: 24px;
   padding: 0;
   box-shadow: 0 18px 48px rgba(29, 42, 61, 0.16);
+  background: transparent;
 }
 
+.vehicle-popup-shell .leaflet-popup-content,
 .leaflet-popup-content {
   margin: 0;
 }
 
+.vehicle-popup-shell .leaflet-popup-tip,
+.leaflet-popup-tip {
+  background: #f4f7fb;
+}
+
+.vehicle-popup-shell .leaflet-popup-close-button,
 .leaflet-popup-close-button {
   top: 14px !important;
   right: 14px !important;
   color: #8a94a7 !important;
+  z-index: 10;
 }
 
 .vehicle-popup-card {
@@ -243,6 +253,8 @@ select {
   padding: 14px;
   background: linear-gradient(180deg, #ffffff, #f4f7fb 100%);
   color: #1d2433;
+  border: 1px solid rgba(123, 142, 173, 0.12);
+  border-radius: 24px;
 }
 
 .vehicle-popup-card__header {

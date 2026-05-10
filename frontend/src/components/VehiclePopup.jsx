@@ -2,10 +2,12 @@ function formatDate(value) {
   if (!value) {
     return "--";
   }
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
+
   return `${date.toLocaleDateString("it-IT")} ${date.toLocaleTimeString("it-IT", {
     hour: "2-digit",
     minute: "2-digit",
@@ -76,10 +78,15 @@ function getEngineLabel(vehicle) {
 
 export default function VehiclePopup({ vehicle }) {
   const status = getVehicleStatus(vehicle);
-  const locationLabel = [vehicle.citta, vehicle.provincia].filter(Boolean).join(" · ") || "Posizione non disponibile";
+  const locationLabel =
+    [vehicle.citta, vehicle.provincia].filter(Boolean).join(" - ") || "Posizione non disponibile";
   const primaryTimestamp = formatDate(vehicle.ts || vehicle.last_seen);
-  const speedValue = vehicle.speed !== null && vehicle.speed !== undefined ? formatNumber(vehicle.speed) : "--";
-  const kmValue = vehicle.km !== null && vehicle.km !== undefined ? formatNumber(vehicle.km, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "--";
+  const speedValue =
+    vehicle.speed !== null && vehicle.speed !== undefined ? formatNumber(vehicle.speed) : "--";
+  const kmValue =
+    vehicle.km !== null && vehicle.km !== undefined
+      ? formatNumber(vehicle.km, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      : "--";
   const coordinatesValue = `${formatCoordinate(vehicle.latitudine)}, ${formatCoordinate(vehicle.longitudine)}`;
   const voltageValue =
     vehicle.tensione !== null && vehicle.tensione !== undefined
@@ -103,7 +110,7 @@ export default function VehiclePopup({ vehicle }) {
 
           <p className="vehicle-popup-card__subtitle">
             {formatText(vehicle.targa, `Tracker #${vehicle.id}`)}
-            {vehicle.id ? ` • ${vehicle.id}` : ""}
+            {vehicle.id ? ` - ${vehicle.id}` : ""}
           </p>
         </div>
       </div>

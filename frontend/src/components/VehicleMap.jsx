@@ -105,7 +105,7 @@ export default function VehicleMap({ vehicles, mapFocusRequest, selectedVehicle,
               }
             }}
           >
-            <Popup>
+            <Popup className="vehicle-popup-shell" maxWidth={320}>
               <VehiclePopup vehicle={vehicle} />
             </Popup>
           </Marker>
