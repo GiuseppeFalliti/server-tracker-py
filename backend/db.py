@@ -89,6 +89,8 @@ class TrackerRepository:
                             tracker.last_seen,
                             tracker.station_id,
                             tracker.model_id,
+                            tracker.marca,
+                            tracker.model,
                             tracker_data.longitudine,
                             tracker_data.latitudine,
                             tracker_data.ts,

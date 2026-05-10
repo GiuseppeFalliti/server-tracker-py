@@ -37,20 +37,16 @@ export default function VehicleSidebar({ vehicles, selectedVehicleId, onSelectVe
 
             <dl className="vehicle-card__grid">
               <div>
-                <dt>TS</dt>
+                <dt>Data</dt>
                 <dd>{formatDate(vehicle.ts)}</dd>
               </div>
               <div>
-                <dt>Last seen</dt>
-                <dd>{formatDate(vehicle.last_seen)}</dd>
+                <dt>Marca</dt>
+                <dd>{formatDate(vehicle.marca)}</dd>
               </div>
               <div>
-                <dt>Lat</dt>
-                <dd>{formatNumber(vehicle.latitudine)}</dd>
-              </div>
-              <div>
-                <dt>Lon</dt>
-                <dd>{formatNumber(vehicle.longitudine)}</dd>
+                <dt>Modello</dt>
+                <dd>{formatDate(vehicle.model)}</dd>
               </div>
               <div>
                 <dt>KM</dt>
