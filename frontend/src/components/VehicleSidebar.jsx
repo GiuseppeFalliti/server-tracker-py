@@ -56,6 +56,10 @@ export default function VehicleSidebar({ vehicles, selectedVehicleId, onSelectVe
                 <dt>KM</dt>
                 <dd>{vehicle.km ?? "--"}</dd>
               </div>
+              <div>
+                <dt>Citta</dt>
+                <dd>{vehicle.citta ?? "--"}</dd>
+              </div>
             </dl>
           </button>
         );

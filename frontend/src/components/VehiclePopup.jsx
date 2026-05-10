@@ -14,6 +14,7 @@ export default function VehiclePopup({ vehicle }) {
       <p>TS: {formatDate(vehicle.ts)}</p>
       <p>Last seen: {formatDate(vehicle.last_seen)}</p>
       <p>KM: {vehicle.km ?? "--"}</p>
+      <p>Citta: {vehicle.citta ?? "--"}</p>
       <p>Speed: {vehicle.speed ?? "--"} km/h</p>
     </div>
   );

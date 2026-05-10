@@ -13,6 +13,7 @@ import threading
 import traceback
 
 import psycopg2
+import reverse_geocoder as rg
 from psycopg2.extras import Json, RealDictCursor
 from dotenv import load_dotenv
 
@@ -38,6 +39,7 @@ class TrackerRepository:
         }
         self.connection = None
         self.lock = threading.Lock()
+        self.city_cache = {}
 
     def save_tracker_packet(self, raw_data):
         """Salva o aggiorna tracker e snapshot telemetrico corrente."""
@@ -155,12 +157,15 @@ class TrackerRepository:
         """Normalizza una riga SQL nel formato JSON atteso dal frontend."""
         io_elements = row.get("io_elements") or {}
         speed = self.parse_numeric_value(io_elements.get("speed"))
+        latitudine = float(row["latitudine"]) if row.get("latitudine") is not None else None
+        longitudine = float(row["longitudine"]) if row.get("longitudine") is not None else None
         return {
             "id": row["id"],
             "imei": row["imei"],
             "last_seen": self.serialize_datetime(row.get("last_seen")),
-            "latitudine": float(row["latitudine"]) if row.get("latitudine") is not None else None,
-            "longitudine": float(row["longitudine"]) if row.get("longitudine") is not None else None,
+            "latitudine": latitudine,
+            "longitudine": longitudine,
+            "citta": self.resolve_city(latitudine, longitudine),
             "ts": self.serialize_datetime(row.get("ts")),
             "km": row.get("km"),
             "speed": speed,
@@ -184,6 +189,35 @@ class TrackerRepository:
             return int(float(value))
         except (TypeError, ValueError):
             return None
+
+    def resolve_city(self, latitudine, longitudine):
+        """Ricava il nome della citta dalle coordinate con cache in memoria."""
+        if latitudine is None or longitudine is None:
+            return None
+
+        cache_key = (round(latitudine, 5), round(longitudine, 5))
+        if cache_key in self.city_cache:
+            return self.city_cache[cache_key]
+
+        try:
+            result = rg.search(cache_key)
+            city = result[0].get("name") if result else None
+        except Exception:
+            city = None
+            app_logger.log_system_event(
+                level="ERROR",
+                event_type="reverse_geocoder_failed",
+                message="Impossibile risolvere la citta dalle coordinate del tracker.",
+                component="db",
+                details={
+                    "latitudine": latitudine,
+                    "longitudine": longitudine,
+                    "traceback": traceback.format_exc(),
+                },
+            )
+
+        self.city_cache[cache_key] = city
+        return city
 
     def upsert_tracker(self, cur, packet):
         """Restituisce l'id del tracker, creandolo se necessario."""
