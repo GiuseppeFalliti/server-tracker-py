@@ -96,9 +96,6 @@ export default function VehiclePopup({ vehicle }) {
   return (
     <div className="vehicle-popup-card">
       <div className="vehicle-popup-card__header">
-        <div className="vehicle-popup-card__symbol" aria-hidden="true">
-          <span />
-        </div>
 
         <div className="vehicle-popup-card__identity">
           <div className="vehicle-popup-card__title-row">
@@ -107,11 +104,6 @@ export default function VehiclePopup({ vehicle }) {
               {status.label}
             </span>
           </div>
-
-          <p className="vehicle-popup-card__subtitle">
-            {formatText(vehicle.targa, `Tracker #${vehicle.id}`)}
-            {vehicle.id ? ` - ${vehicle.id}` : ""}
-          </p>
         </div>
       </div>
 
