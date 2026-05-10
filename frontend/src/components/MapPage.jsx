@@ -47,7 +47,7 @@ export default function MapPage() {
           if (currentId && nextVehicles.some((vehicle) => vehicle.id === currentId)) {
             return currentId;
           }
-          return nextVehicles[0]?.id ?? null;
+          return null;
         });
       } catch (fetchError) {
         if (!isMounted || fetchError.name === "AbortError") {
