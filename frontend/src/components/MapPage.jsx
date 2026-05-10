@@ -88,26 +88,8 @@ export default function MapPage() {
         <header className="sidebar__header">
           <p className="sidebar__eyebrow">Fleet Map</p>
           <h1>Veicoli in tempo reale</h1>
-          <p className="sidebar__copy">
-            Snapshot corrente dei tracker registrati nel database PostgreSQL.
-          </p>
         </header>
-
-        <section className="sidebar__status">
-          <div>
-            <span className="status-label">Veicoli</span>
-            <strong>{vehicles.length}</strong>
-          </div>
-          <div>
-            <span className="status-label">Refresh</span>
-            <strong>15s</strong>
-          </div>
-          <div>
-            <span className="status-label">Ultimo update</span>
-            <strong>{lastUpdated ? lastUpdated.toLocaleTimeString("it-IT") : "--:--:--"}</strong>
-          </div>
-        </section>
-
+        
         {error ? <div className="state-banner state-banner--error">{error}</div> : null}
         {loading ? <div className="state-banner">Caricamento veicoli...</div> : null}
         {!loading && vehicles.length === 0 ? (
