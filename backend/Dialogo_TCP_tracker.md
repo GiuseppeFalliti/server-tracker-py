@@ -1,24 +1,24 @@
-Certo. Ti mostro un esempio realistico di dialogo TCP tra tracker Teltonika e server, usando un payload AVL reale già presente in [avlDecoder.py](/abs/path/c:/Users/Admin/Desktop/server_tracker/server_py/avlDecoder.py:171).
+# Esempio di dialogo TCP tracker -> server
 
-## Esempio di connessione tracker -> server
+Questo file mostra una sessione realistica tra un tracker Teltonika e il server TCP del progetto.
 
-### 1. Il tracker si collega al server TCP
-Connessione verso:
+## 1. Connessione iniziale
+
+Il tracker apre una connessione TCP verso:
 
 ```text
 SERVER_IP:5001
 ```
 
-### 2. Il tracker invia l'IMEI
-Nel protocollo Teltonika, i primi 2 byte sono la lunghezza dell'IMEI, poi arrivano le cifre ASCII.
+## 2. Handshake IMEI
 
-Esempio IMEI:
+Nel protocollo Teltonika, il tracker invia:
 
 ```text
-352093081429150
+[2 byte lunghezza IMEI][IMEI ASCII]
 ```
 
-Frame TCP inviato dal tracker:
+Esempio:
 
 ```text
 000F333532303933303831343239313530
@@ -26,67 +26,71 @@ Frame TCP inviato dal tracker:
 
 Significato:
 
-- `000F` = lunghezza IMEI = 15
-- `333532303933303831343239313530` = stringa ASCII `352093081429150`
+- `000F` = lunghezza IMEI `15`
+- `333532303933303831343239313530` = ASCII di `352093081429150`
 
-### 3. Il server risponde all'handshake
-Se accetta il dispositivo, il server risponde con:
+## 3. Risposta del server
+
+Se l'IMEI viene accettato, il server risponde:
 
 ```text
 01
 ```
 
-Se lo rifiutasse, risponderebbe con:
+Se il dispositivo venisse rifiutato, la risposta logica sarebbe:
 
 ```text
 00
 ```
 
----
+## 4. Invio del frame AVL
 
-## 4. Il tracker invia il pacchetto AVL
-
-Esempio reale di payload AVL ricevuto dal server:
+Dopo l'handshake, il tracker invia un frame AVL TCP:
 
 ```text
-00000000000004d2081d00000176ccb789480000000000000000000000000000000000060301000200b40002422dea430f150148000000000000000176ccb69ee80000000000000000000000000000000000060301000200b40002422de8430f150148000000000000000176ccb5b4880000000000000000000000000000000000060301000200b40002422de6430f160148000000000000000176ccb4ca280000000000000000000000000000000000060301000200b40002422de6430f130148000000000000000176ccb3dfc80000000000000000000000000000000000060301000200b40002422de6430f160148000000000000000176ccb2f5680000000000000000000000000000000000060301000200b40002422de6430f110148000000000000000176ccb20b080000000000000000000000000000000000060301000200b40002422de4430f110148000000000000000176cc96f1880000000000000000000000000000000000040301000200b400000148000000000000000176cc9607280000000000000000000000000000000000040301000200b400000148000000000000000176cc951cc80000000000000000000000000000000000040301000200b400000148000000000000000176cc9432680000000000000000000000000000000000040301000200b400000148000000000000000176cc9348080000000000000000000000000000000000040301000200b400000148000000000000000176cc925da80000000000000000000000000000000000040301000200b400000148000000000000000176cc9173480000000000000000000000000000000000040301000200b400000148000000000000000176cc900be80000000000000000000000000000000000040301000200b400000148000000000000000176cc8f96b80000000000000000000000000000000000040301000200b400000148000000000000000176cc8eac580000000000000000000000000000000000040301000200b400000148000000000000000176cc8d4cc80200000000000000000000000000000002040301000200b400000148000000000000000176cc8d06780000000000000000000000000000000000040301000200b400000148000000000000000176cc8c1c180000000000000000000000000000000000040301000200b400000148000000000000000176cc8b31b80000000000000000000000000000000000040301000200b400000148000000000000000176cc8a47580000000000000000000000000000000000040301000200b400000148000000000000000176cc895cf80000000000000000000000000000000000040301000200b400000148000000000000000176cc8872980000000000000000000000000000000000040301000200b400000148000000000000000176cc8788380000000000000000000000000000000000040301000200b400000148000000000000000176cc869dd80000000000000000000000000000000000040301000200b400000148000000000000000176cc85b3780000000000000000000000000000000000040301000200b400000148000000000000000176cc84c9180000000000000000000000000000000000040301000200b400000148000000000000000176cc83deb80000000000000000000000000000000000040301000200b40000014800000000001d000027ca
+[preamble][data field length][codec id][number of data 1][AVL data ...][number of data 2][CRC]
 ```
 
----
+Esempio reale abbreviato:
 
-## 5. Cosa contiene questo pacchetto
+```text
+00000000000004d2081d00000176ccb78948...
+```
 
-Dall’inizio del payload:
+Campi principali:
 
-- `00000000` = preambolo
+- `00000000` = preamble
 - `000004d2` = lunghezza dati
-- `08` = codec ID 8
-- `1d` = numero record: 29
-- poi arrivano i record AVL
-- ultimo `1d` = numero record finale
-- `000027ca` = CRC
+- `08` = `Codec 8`
+- `1d` = `29` record AVL dichiarati
+- `...` = payload AVL
+- `1d` finale = conferma del numero record
+- `000027ca` = CRC finale
 
-Quindi il tracker sta dicendo al server:
+## 5. Cosa fa il server
 
-- “ti sto inviando 29 record AVL”
-- “questo è un pacchetto codec 8”
-- “verifica CRC finale”
+Quando riceve il frame AVL, il server:
 
----
+1. verifica il `preamble`
+2. verifica il `codec id`
+3. confronta `number of data 1` e `number of data 2`
+4. valida il `CRC-16/IBM`
+5. decodifica i record AVL
+6. estrae il `primary_record`
+7. salva i dati su PostgreSQL
+8. invia l'ACK finale
 
-## 6. Risposta del server al pacchetto AVL
+## 6. ACK finale
 
-Dopo aver elaborato correttamente il pacchetto, il server deve rispondere con il numero di record accettati in 4 byte big-endian.
+Il server risponde con il numero di record accettati in 4 byte big-endian.
 
-Se i record sono `0x1d` = 29, l'ACK del server sarà:
+Se i record accettati sono `29`, l'ACK e':
 
 ```text
 0000001d
 ```
 
----
-
-## Sequenza completa compatta
+## 7. Sequenza compatta
 
 ```text
 TRACKER -> SERVER
@@ -102,11 +106,9 @@ SERVER -> TRACKER
 0000001d
 ```
 
----
+## 8. Struttura logica del record decodificato
 
-## Esempio logico di ciò che il server estrae
-
-Dal pacchetto AVL il tuo server ricava poi un dizionario come questo:
+Dal payload AVL il backend costruisce un dizionario nel formato usato dal resto del progetto:
 
 ```python
 {
@@ -114,15 +116,20 @@ Dal pacchetto AVL il tuo server ricava poi un dizionario come questo:
     "codecid": 8,
     "no_record_i": 29,
     "no_record_e": 29,
-    "d_time_unix": ...,
-    "d_time_local": "...",
-    "lon": ...,
-    "lat": ...,
-    "speed": ...,
+    "d_time_unix": 1609621190808,
+    "d_time_local": "2021-01-03 02:29:50",
+    "lon": 801065150,
+    "lat": 130466366,
+    "speed": 0,
     "io_data": {...}
 }
 ```
 
-Se vuoi, nel prossimo messaggio posso anche:
-- spezzarti quel pacchetto AVL campo per campo
-- oppure simularti una sessione completa “tracker -> server -> database -> log JSON” con valori leggibili.
+## 9. Risultato applicativo
+
+Dopo la persistenza:
+
+- `tracker` contiene lo stato del veicolo
+- `tracker_data` contiene l'ultima telemetria
+- `api/vehicles` espone i dati alla dashboard
+- il frontend mostra posizione, popup, `citta`, `marca`, `model`, `km` e `speed`

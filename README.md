@@ -1,247 +1,184 @@
-# Server TCP Tracker Teltonika
+# Server Tracker Py
 
-Server TCP in Python per tracker Teltonika con parser completo `Codec 8 TCP`, persistenza su PostgreSQL e logging JSON strutturato per server e dispositivi.
+Server TCP in Python per tracker Teltonika con:
 
-## Panoramica
+- parsing `Codec 8 TCP`
+- persistenza PostgreSQL
+- API FastAPI per la dashboard
+- frontend React + Leaflet per la mappa veicoli
+- logging JSON strutturato
 
-Il progetto implementa un listener TCP pensato per rimanere attivo h24 e gestire il flusso reale dei tracker Teltonika:
+## Architettura
 
-1. ricezione dell'`IMEI handshake`
-2. risposta di accettazione `0x01`
-3. ricezione del frame AVL completo
-4. validazione del frame `Codec 8 TCP`
-5. decodifica dei record AVL e dei blocchi I/O
-6. salvataggio su PostgreSQL
-7. invio dell'ACK finale con il `record count`
-8. scrittura dei log JSON globali e per tracker
+Il progetto e' diviso in due parti principali:
+
+1. `backend/`
+   - riceve i pacchetti TCP dei tracker
+   - decodifica i record AVL
+   - salva lo stato corrente su PostgreSQL
+   - espone l'API `/api/vehicles` per la dashboard
+2. `frontend/`
+   - interroga periodicamente l'API
+   - mostra i veicoli in lista e su mappa
+   - centra la mappa solo su selezione esplicita del veicolo
+
+## Flusso end-to-end
+
+1. Il tracker apre una connessione TCP verso il server.
+2. Invia l'IMEI nel formato Teltonika `2 byte length + ASCII`.
+3. Il server risponde `0x01` se l'handshake viene accettato.
+4. Il tracker invia un frame AVL `Codec 8 TCP`.
+5. Il server valida `preamble`, `codec id`, `record count` e `CRC-16/IBM`.
+6. Il decoder estrae il `primary_record` e i blocchi I/O.
+7. `backend/db.py` aggiorna:
+   - `tracker`
+   - `tracker_data`
+8. La dashboard legge i dati da `GET /api/vehicles`.
+9. Il frontend aggiorna mappa e lista ogni 15 secondi.
 
 ## Funzionalita'
 
-- ascolto TCP continuo sulla porta configurata nel codice
-- parsing completo `Codec 8 TCP`
-- lettura IMEI nel formato `2 byte length + ASCII IMEI`
-- lettura frame-aware dal socket con `recv_exact`
-- validazione di `preamble`, `codec id`, `record count` e `CRC-16/IBM`
-- supporto ai record multipli nello stesso frame AVL
-- parsing dei blocchi I/O `N1`, `N2`, `N4`, `N8`
-- salvataggio su PostgreSQL delle informazioni correnti del tracker
-- salvataggio del payload AVL normalizzato in `tracker_data.io_elements`
-- logging JSON Lines globale e per singolo tracker
-- esecuzione persistente con PM2 su Windows
-
-## Flusso di funzionamento
-
-1. Il tracker apre una connessione TCP verso il server.
-2. Il server legge i primi 2 byte della lunghezza IMEI.
-3. Il server legge esattamente i byte ASCII dell'IMEI.
-4. Il server accetta l'handshake inviando `0x01`.
-5. Il server legge il frame AVL TCP completo:
-   - `preamble`
-   - `data field length`
-   - `codec id`
-   - `number of data 1`
-   - record AVL
-   - `number of data 2`
-   - `CRC`
-6. Il decoder valida:
-   - `preamble = 00000000`
-   - `codec id = 0x08`
-   - coerenza tra i due `number of data`
-   - `CRC-16/IBM`
-7. Il decoder estrae tutti i record del frame e costruisce:
-   - `records`
-   - `record_count`
-   - `crc_valid`
-   - `primary_record`
-8. Il server salva su database il `primary_record` del pacchetto, mantenendo nei log e nel decoder la visibilita' del batch completo.
-9. Il server invia al tracker l'ACK finale come intero big-endian a 4 byte con il numero di record accettati.
-
-## Protocollo Codec 8 TCP
-
-### IMEI handshake
-
-Il tracker si presenta con un frame iniziale composto da:
-
-```text
-[2 byte lunghezza IMEI][IMEI ASCII]
-```
-
-Esempio logico:
-
-```text
-000F333532303933303831343239313530
-```
-
-- `000F`: lunghezza IMEI = 15
-- il resto e' l'IMEI ASCII
-
-Se l'IMEI viene accettato, il server risponde con:
-
-```text
-01
-```
-
-### AVL frame
-
-Dopo l'handshake, il tracker invia un frame AVL TCP nel formato:
-
-```text
-[preamble][data field length][codec id][number of data 1][AVL data ...][number of data 2][CRC]
-```
-
-Significato dei campi principali:
-
-- `preamble`: sempre `00000000`
-- `data field length`: lunghezza del blocco dati dal `codec id` fino al secondo `number of data`
-- `codec id`: per questo progetto deve essere `0x08`
-- `number of data 1`: numero record dichiarato all'inizio del payload
-- `number of data 2`: numero record dichiarato alla fine del payload
-- `CRC`: checksum del payload verificato con `CRC-16/IBM`
-
-### ACK finale
-
-Dopo la validazione e l'elaborazione del frame, il server risponde con:
-
-```text
-000000<record_count>
-```
-
-Esempio per `29` record accettati:
-
-```text
-0000001D
-```
+- listener TCP multi-client per tracker Teltonika
+- parser completo `Codec 8 TCP`
+- supporto a record multipli nello stesso frame
+- mapping degli AVL ID tramite `avlIds.json`
+- salvataggio telemetria corrente su PostgreSQL
+- dashboard HTTP con FastAPI
+- frontend React con mappa Leaflet
+- reverse geocoding delle coordinate con `reverse_geocoder`
+- campi dashboard: `citta`, `marca`, `model`, `km`, `speed`
+- log JSON Lines globali e per singolo tracker
 
 ## Struttura del progetto
 
 ```text
 server_py/
-|- main.py
-|- db.py
-|- logger.py
-|- avlDecoder.py
-|- IO_decoder.py
-|- avlMatcher.py
-|- avlIds.json
-|- msgEncoder.py
-|- ecosystem.config.js
-|- start-pm2-server.cmd
-|- README.md
-|- PM2_GUIDE.md
-|- .env
-|- .env.example
-|- logs/
-|- pm2-home/
-\- pm2-logs/
+|- backend/
+|  |- api_main.py
+|  |- api_server.py
+|  |- avlDecoder.py
+|  |- avlIds.json
+|  |- avlMatcher.py
+|  |- db.py
+|  |- Dialogo_TCP_tracker.md
+|  |- ecosystem.config.js
+|  |- IO_decoder.py
+|  |- logger.py
+|  |- main.py
+|  |- msgEncoder.py
+|  |- PM2_GUIDE.md
+|  |- requirements.txt
+|  \- start-pm2-server.cmd
+|- frontend/
+|  |- package.json
+|  |- src/
+|  |  |- App.jsx
+|  |  |- main.jsx
+|  |  |- styles.css
+|  |  \- components/
+|  |     |- MapPage.jsx
+|  |     |- VehicleMap.jsx
+|  |     |- VehiclePopup.jsx
+|  |     \- VehicleSidebar.jsx
+|  \- vite.config.js
+\- README.md
 ```
 
-## Componenti principali
+## Backend
 
-### `main.py`
+### Componenti principali
 
-E' l'entry point del server TCP. Si occupa di:
+- `backend/main.py`
+  - entry point del server TCP
+  - handshake IMEI
+  - ricezione frame AVL
+  - persistenza su PostgreSQL
+- `backend/avlDecoder.py`
+  - parser completo del frame `Codec 8 TCP`
+- `backend/IO_decoder.py`
+  - parsing delle sezioni I/O `N1`, `N2`, `N4`, `N8`
+- `backend/db.py`
+  - normalizzazione dati
+  - update di `tracker` e `tracker_data`
+  - serializzazione dei veicoli per la dashboard
+- `backend/api_server.py`
+  - API FastAPI della dashboard
+- `backend/api_main.py`
+  - avvio Uvicorn su `0.0.0.0:8000`
 
-- apertura del socket server
-- ascolto e accettazione delle connessioni
-- lettura dell'IMEI con parsing binario rigoroso
-- lettura del frame AVL completo tramite `recv_exact`
-- invocazione del decoder `Codec 8 TCP`
-- persistenza su PostgreSQL
-- invio dell'ACK finale al tracker
-- logging degli eventi di rete e di protocollo
+### API disponibili
 
-### `avlDecoder.py`
+#### `GET /api/health`
 
-Implementa il parser completo del frame `Codec 8 TCP`.
+Ritorna lo stato del servizio API e le origin CORS abilitate.
 
-Funzioni principali:
+#### `GET /api/vehicles`
 
-- verifica del `preamble`
-- verifica del `codec id`
-- verifica della coerenza del `record count`
-- verifica del `CRC-16/IBM`
-- parsing sequenziale dei record AVL
-- gestione di record multipli nello stesso frame
+Restituisce i veicoli con coordinate disponibili.
 
-Il decoder restituisce una struttura con:
+Campi attuali del payload:
 
-- `records`
-- `record_count`
-- `record_count_confirmed`
-- `crc_received`
-- `crc_valid`
-- `primary_record`
-
-### `IO_decoder.py`
-
-Decodifica la sezione I/O del record AVL secondo la struttura ufficiale del `Codec 8`:
-
-- `event_io_id`
-- `total_io_count`
-- gruppo `N1`
-- gruppo `N2`
-- gruppo `N4`
-- gruppo `N8`
-
-Ogni gruppo viene interpretato con dimensioni valore coerenti con la specifica Teltonika.
-
-### `db.py`
-
-Gestisce la connessione PostgreSQL e aggiorna le tabelle applicative:
-
-- `tracker`
-- `tracker_data`
-
-Persistenza principale:
-
-- `IMEI`
+- `id`
+- `imei`
 - `last_seen`
-- `longitudine`
 - `latitudine`
+- `longitudine`
+- `citta`
 - `ts`
-- `KM`
-- `io_elements` (`jsonb`)
+- `km`
+- `speed`
+- `marca`
+- `model`
+- `station_id`
+- `model_id`
 
-La colonna `io_elements` contiene il payload AVL normalizzato:
+Esempio:
 
-- campi principali del record
-- blocchi I/O raw appiattiti come `io_raw_*`
-- blocchi I/O nominati come `io_name_*`
+```json
+[
+  {
+    "id": 1,
+    "imei": "352093081429150",
+    "last_seen": "2026-05-09T21:31:48.558672+02:00",
+    "latitudine": 41.9028,
+    "longitudine": 12.4964,
+    "citta": "Rome",
+    "ts": "2026-05-09T21:30:48.558672+02:00",
+    "km": 128450.0,
+    "speed": 42,
+    "marca": "Fiat",
+    "model": "Ducato",
+    "station_id": 1,
+    "model_id": 101
+  }
+]
+```
 
-### `logger.py`
+### Database PostgreSQL
 
-Scrive eventi JSON Lines in modo strutturato e thread-safe:
-
-- `logs/system.json` per il log globale del server
-- `logs/<IMEI>/YYYY-MM-DD.json` per il log giornaliero di ogni tracker
-
-### `avlMatcher.py`
-
-Converte gli AVL ID numerici in nomi leggibili usando `avlIds.json`.
-
-## Database PostgreSQL
-
-Il progetto legge la configurazione da `.env`.
+La configurazione viene letta da `backend/.env`.
 
 Esempio:
 
 ```env
 PGHOST=localhost
-PGDATABASE=your_database_name
+PGDATABASE=tracker_db
 PGUSER=postgres
 PGPASSWORD=your_password
 PGPORT=5432
 ```
 
-### Tabelle attese
+Tabelle attese:
 
 #### `tracker`
 
 - `id`
-- `IMEI`
+- `imei`
 - `last_seen`
 - `station_id`
 - `model_id`
+- `marca`
+- `model`
 
 #### `tracker_data`
 
@@ -250,96 +187,148 @@ PGPORT=5432
 - `longitudine`
 - `latitudine`
 - `ts`
-- `KM`
+- `km`
 - `io_elements`
 
-## Sistema di logging
+## Frontend
 
-Il logging e' strutturato in formato JSON Lines.
+La dashboard e' costruita con React, Vite e Leaflet.
 
-### Log globale
+### Librerie principali
 
-Percorso:
+- `react`
+- `react-dom`
+- `leaflet`
+- `react-leaflet`
 
-```text
-logs/system.json
-```
+### Comportamento della mappa
 
-Contiene eventi di:
+- la mappa usa OpenStreetMap come `TileLayer` base
+- al refresh pagina non apre popup automaticamente
+- al refresh pagina non fa auto-zoom sui veicoli
+- cliccando un veicolo nella lista o un marker, la mappa centra il punto selezionato
+- il popup del veicolo selezionato viene aperto sulla mappa
 
-- startup e shutdown del server
-- nuove connessioni TCP
-- ricezione IMEI
-- ricezione dei frame AVL
-- esito del decode
-- persistenza su database
-- invio ACK
-- errori di rete
-- errori applicativi
-- errori di framing
-- mismatch del `record count`
-- `CRC` invalido
+### Sidebar veicoli
 
-### Log per tracker
+La lista laterale mostra:
 
-Percorso:
-
-```text
-logs/<IMEI>/YYYY-MM-DD.json
-```
-
-Ogni riga e' un evento JSON autonomo. I campi tipici sono:
-
-- `timestamp`
-- `level`
-- `event_type`
-- `component`
-- `message`
 - `imei`
-- `client_ip`
-- `client_port`
-- `details`
+- timestamp `ts`
+- `marca`
+- `model`
+- `km`
+- `citta`
+- `speed`
 
-## Avvio manuale
+## Installazione
 
-Con virtualenv attivo:
+### Backend
+
+Da `backend/`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Su Windows PowerShell:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### Frontend
+
+Da `frontend/`:
+
+```bash
+npm install
+```
+
+## Avvio locale
+
+### Server TCP tracker
+
+Da `backend/`:
+
+```bash
 python main.py
 ```
 
-Oppure con interpreter esplicito:
+### API dashboard
 
-```powershell
-.\.venv\Scripts\python.exe main.py
+Da `backend/`:
+
+```bash
+python api_main.py
 ```
 
-## Avvio con PM2
+### Frontend
 
-Il progetto include una configurazione PM2 pronta:
+Da `frontend/`:
 
-```powershell
-C:\Users\Admin\AppData\Roaming\npm\pm2.cmd start ecosystem.config.js
+```bash
+npm run dev
 ```
 
-Per la gestione completa del processo, consulta:
+## Build frontend
 
-- [PM2_GUIDE.md](PM2_GUIDE.md)
+Da `frontend/`:
 
-## Requisiti principali
+```bash
+npm run build
+```
 
-- Python 3
-- PostgreSQL
-- virtualenv `.venv`
-- dipendenze Python installate nel virtualenv
-- PM2 per l'esecuzione persistente
+La build viene scritta in `frontend/dist/`.
 
-## Note operative
+## Deploy e riavvio servizi
 
-- il parser supportato e' `Codec 8 TCP`
-- il server valida il frame prima di inviare l'ACK
-- il database mantiene lo stato corrente del tracker, non uno storico completo dei record
-- i log applicativi stanno in `logs/`
-- i log tecnici di PM2 stanno in `pm2-logs/`
-- il server e' pensato per restare attivo h24
-- per l'avvio automatico dopo reboot su Windows, consulta `PM2_GUIDE.md`
+Dopo una modifica backend:
+
+1. aggiornare il codice sulla macchina target
+2. installare o aggiornare le dipendenze:
+
+```bash
+pip install -r requirements.txt
+```
+
+3. riavviare il servizio API o il process manager usato
+
+Se usi `systemd`:
+
+```bash
+sudo systemctl restart tracker-dashboard-api
+sudo systemctl status tracker-dashboard-api
+```
+
+Se usi PM2 su Windows, consulta [backend/PM2_GUIDE.md](backend/PM2_GUIDE.md).
+
+Dopo una modifica frontend:
+
+```bash
+npm install
+npm run build
+```
+
+## Logging
+
+Il progetto scrive log JSON Lines in:
+
+- `backend/logs/system.json`
+- `backend/logs/<IMEI>/YYYY-MM-DD.json`
+
+I log PM2, quando usato, stanno in:
+
+- `backend/pm2-logs/tracker-tcp-server-out.log`
+- `backend/pm2-logs/tracker-tcp-server-error.log`
+- `backend/pm2-logs/tracker-dashboard-api-out.log`
+- `backend/pm2-logs/tracker-dashboard-api-error.log`
+
+## Documenti utili
+
+- [backend/Dialogo_TCP_tracker.md](backend/Dialogo_TCP_tracker.md)
+- [backend/PM2_GUIDE.md](backend/PM2_GUIDE.md)
