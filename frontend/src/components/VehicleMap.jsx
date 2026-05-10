@@ -80,7 +80,7 @@ export default function VehicleMap({ vehicles, mapFocusRequest, selectedVehicle,
     <div className="map-wrap">
       <MapContainer center={DEFAULT_CENTER} zoom={6} className="fleet-map" scrollWheelZoom>
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright"></a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
