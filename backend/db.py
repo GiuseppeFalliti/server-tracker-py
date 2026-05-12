@@ -24,6 +24,16 @@ from logger import app_logger
 load_dotenv()
 
 avl_match = avlIdMatcher()
+FMB150_AVL_WHITELIST = {
+    81: "Vehicle Speed",
+    84: "Fuel Level",
+    87: "Total Mileage",
+    105: "Total Mileage Counted",
+    107: "Fuel Consumed Counted",
+    325: "VIN",
+    387: "ISO6709 Coordinates",
+    866: "Remaining Distance",
+}
 
 
 class TrackerRepository:
@@ -158,7 +168,8 @@ class TrackerRepository:
     def serialize_vehicle_snapshot(self, row):
         """Normalizza una riga SQL nel formato JSON atteso dal frontend."""
         io_elements = row.get("io_elements") or {}
-        speed = self.parse_numeric_value(io_elements.get("speed"))
+        gps_data = io_elements.get("gps") if isinstance(io_elements, dict) else {}
+        speed = self.parse_numeric_value(gps_data.get("speed"))
         latitudine = float(row["latitudine"]) if row.get("latitudine") is not None else None
         longitudine = float(row["longitudine"]) if row.get("longitudine") is not None else None
         return {
@@ -339,9 +350,8 @@ class TrackerRepository:
     def normalize_packet(self, raw_data):
         """Prepara i campi nel formato atteso dallo schema SQL."""
         named_io = self.id_to_avl(raw_data.get("io_data", {}))
-        flat_named_io = self.flatten_named_io(named_io)
-        flat_raw_io = self.flatten_raw_io(raw_data.get("io_data", {}))
-        io_elements = self.build_io_elements(raw_data, flat_named_io)
+        filtered_parameters = self.extract_fmb150_parameters(raw_data.get("io_data", {}))
+        io_elements = self.build_io_elements(raw_data, filtered_parameters)
 
         return {
             "imei": raw_data["imei"],
@@ -351,8 +361,8 @@ class TrackerRepository:
             "ts": self.resolve_packet_timestamp(raw_data),
             "km": self.extract_km(named_io),
             "io_elements": io_elements,
-            "has_raw_io": bool(flat_raw_io),
-            "has_named_io": bool(flat_named_io),
+            "has_raw_io": bool(raw_data.get("io_data", {})),
+            "has_named_io": bool(filtered_parameters),
         }
 
     def resolve_packet_timestamp(self, raw_data):
@@ -409,27 +419,68 @@ class TrackerRepository:
             flattened[f"io_name_{normalized_name}"] = value
         return flattened
 
-    def build_io_elements(self, raw_data, flat_named_io):
-        """Costruisce l'oggetto JSONB piatto con i campi AVL utili alla dashboard."""
-        avl_fields = {
-            "imei": raw_data.get("imei"),
-            "sys_time": raw_data.get("sys_time"),
-            "codecid": raw_data.get("codecid"),
-            "no_record_i": raw_data.get("no_record_i"),
-            "no_record_e": raw_data.get("no_record_e"),
-            "crc-16": raw_data.get("crc-16"),
-            "d_time_unix": raw_data.get("d_time_unix"),
-            "d_time_local": raw_data.get("d_time_local"),
-            "priority": raw_data.get("priority"),
-            "lon": raw_data.get("lon"),
-            "lat": raw_data.get("lat"),
-            "alt": raw_data.get("alt"),
-            "angle": raw_data.get("angle"),
-            "satellites": raw_data.get("satellites"),
-            "speed": raw_data.get("speed"),
+    def build_io_elements(self, raw_data, filtered_parameters):
+        """Costruisce l'oggetto JSONB con GPS essenziale e whitelist AVL FMB150."""
+        return {
+            "gps": {
+                "imei": raw_data.get("imei"),
+                "sys_time": raw_data.get("sys_time"),
+                "codecid": raw_data.get("codecid"),
+                "no_record_i": raw_data.get("no_record_i"),
+                "no_record_e": raw_data.get("no_record_e"),
+                "crc-16": raw_data.get("crc-16"),
+                "d_time_unix": raw_data.get("d_time_unix"),
+                "d_time_local": raw_data.get("d_time_local"),
+                "priority": raw_data.get("priority"),
+                "lon": raw_data.get("lon"),
+                "lat": raw_data.get("lat"),
+                "alt": raw_data.get("alt"),
+                "angle": raw_data.get("angle"),
+                "satellites": raw_data.get("satellites"),
+                "speed": raw_data.get("speed"),
+            },
+            "parameters": filtered_parameters,
         }
-        avl_fields.update(flat_named_io)
-        return avl_fields
+
+    def extract_fmb150_parameters(self, io_data):
+        """Estrae solo gli AVL ID FMB150 richiesti nel formato {id, name, value}."""
+        filtered_parameters = []
+        for group_values in io_data.values():
+            for raw_avl_id, raw_value in group_values.items():
+                avl_id = int(raw_avl_id)
+                if avl_id not in FMB150_AVL_WHITELIST:
+                    continue
+
+                filtered_parameters.append(
+                    {
+                        "id": avl_id,
+                        "name": FMB150_AVL_WHITELIST[avl_id],
+                        "value": self.normalize_avl_value(avl_id, raw_value),
+                    }
+                )
+
+        filtered_parameters.sort(key=lambda parameter: parameter["id"])
+        return filtered_parameters
+
+    def normalize_avl_value(self, avl_id, value):
+        """Normalizza i valori AVL, decodificando stringhe ASCII quando possibile."""
+        if not isinstance(value, str):
+            return value
+
+        if avl_id not in {325, 387}:
+            return value
+
+        try:
+            decoded_bytes = bytes.fromhex(value)
+        except ValueError:
+            return value
+
+        try:
+            decoded_value = decoded_bytes.decode("utf-8").strip("\x00").strip()
+        except UnicodeDecodeError:
+            return value
+
+        return decoded_value or value
 
     def normalize_io_key(self, value):
         """Rende stabili e sicure le chiavi dei campi I/O nominati."""
