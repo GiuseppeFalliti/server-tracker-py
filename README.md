@@ -3,6 +3,7 @@
 Server TCP in Python per tracker Teltonika con:
 
 - parsing `Codec 8 TCP`
+- parsing `Codec 8 Extended (8E) TCP`
 - persistenza PostgreSQL
 - API FastAPI per la dashboard
 - frontend React + Leaflet per la mappa veicoli
@@ -27,7 +28,7 @@ Il progetto e' diviso in due parti principali:
 1. Il tracker apre una connessione TCP verso il server.
 2. Invia l'IMEI nel formato Teltonika `2 byte length + ASCII`.
 3. Il server risponde `0x01` se l'handshake viene accettato.
-4. Il tracker invia un frame AVL `Codec 8 TCP`.
+4. Il tracker invia un frame AVL `Codec 8 TCP` oppure `Codec 8 Extended (8E) TCP`.
 5. Il server valida `preamble`, `codec id`, `record count` e `CRC-16/IBM`.
 6. Il decoder estrae il `primary_record` e i blocchi I/O.
 7. `backend/db.py` aggiorna:
@@ -40,6 +41,7 @@ Il progetto e' diviso in due parti principali:
 
 - listener TCP multi-client per tracker Teltonika
 - parser completo `Codec 8 TCP`
+- supporto `Codec 8 Extended (0x8E)` con I/O estesi e NX variabile
 - supporto a record multipli nello stesso frame
 - mapping degli AVL ID tramite `avlIds.json`
 - salvataggio telemetria corrente su PostgreSQL
@@ -95,6 +97,7 @@ server_py/
   - persistenza su PostgreSQL
 - `backend/avlDecoder.py`
   - parser completo del frame `Codec 8 TCP`
+  - supporto al frame `Codec 8 Extended (8E) TCP`
 - `backend/IO_decoder.py`
   - parsing delle sezioni I/O `N1`, `N2`, `N4`, `N8`
 - `backend/db.py`
