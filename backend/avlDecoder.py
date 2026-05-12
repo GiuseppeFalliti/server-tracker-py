@@ -1,5 +1,5 @@
 """
-Decoder completo dei pacchetti AVL Teltonika Codec 8 su TCP.
+Decoder completo dei pacchetti AVL Teltonika Codec 8 e 8E su TCP.
 """
 
 import datetime
@@ -12,13 +12,13 @@ io = IODecoder()
 
 
 class avlDecoder():
-    """Parsa un frame Codec 8 TCP e restituisce records e metadati."""
+    """Parsa un frame Codec 8/8E TCP e restituisce records e metadati."""
 
     def __init__(self):
         self.raw_data = b""
 
     def decodeAVL(self, data):
-        """Decodifica un frame TCP Teltonika Codec 8."""
+        """Decodifica un frame TCP Teltonika Codec 8 o 8E."""
         try:
             self.raw_data = data
             if len(data) < 12:
@@ -41,7 +41,7 @@ class avlDecoder():
                 )
 
             codec_id = data[8]
-            if codec_id != 0x08:
+            if codec_id not in (0x08, 0x8E):
                 return self.invalid_packet("Codec ID non supportato.", {"codec_id": codec_id})
 
             record_count_1 = data[9]
@@ -99,7 +99,7 @@ class avlDecoder():
             app_logger.log_system_event(
                 level="INFO",
                 event_type="decoder_packet_decoded",
-                message="Frame Codec 8 decodificato con successo.",
+                message="Frame AVL decodificato con successo.",
                 component="decoder",
                 details={
                     "codec_id": codec_id,
@@ -110,7 +110,7 @@ class avlDecoder():
             return packet
         except Exception as e:
             return self.invalid_packet(
-                "Eccezione durante la decodifica del frame Codec 8.",
+                "Eccezione durante la decodifica del frame AVL.",
                 {
                     "error": str(e),
                 },
@@ -137,7 +137,7 @@ class avlDecoder():
             speed = int.from_bytes(data[cursor:cursor + 2], byteorder="big", signed=False)
             cursor += 2
 
-            io_data, cursor = io.decode_from_record(data, cursor)
+            io_data, cursor = io.decode_from_record(data, cursor, codec_id=self.raw_data[8])
             if io_data == -1:
                 return -1, offset
 
@@ -159,6 +159,7 @@ class avlDecoder():
                     "n2": io_data["n2"],
                     "n4": io_data["n4"],
                     "n8": io_data["n8"],
+                    "nx": io_data.get("nx", {}),
                 },
             }
             return record, cursor

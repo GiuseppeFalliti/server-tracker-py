@@ -1,5 +1,5 @@
 """
-Decodifica della sezione I/O dei pacchetti AVL Teltonika Codec 8.
+Decodifica della sezione I/O dei pacchetti AVL Teltonika Codec 8 e 8E.
 """
 
 import traceback
@@ -14,14 +14,18 @@ class IODecoder():
         self.IO_data = b""
         self.Ns_data = {}
 
-    def decode_from_record(self, record_bytes, offset):
+    def decode_from_record(self, record_bytes, offset, codec_id=0x08):
         """Decodifica la sezione I/O del record AVL partendo da un offset."""
         try:
             cursor = offset
-            event_io_id = record_bytes[cursor]
-            cursor += 1
-            total_io_count = record_bytes[cursor]
-            cursor += 1
+            is_extended = codec_id == 0x8E
+            counter_size = 2 if is_extended else 1
+            id_size = 2 if is_extended else 1
+
+            event_io_id = self.read_uint(record_bytes, cursor, id_size)
+            cursor += id_size
+            total_io_count = self.read_uint(record_bytes, cursor, counter_size)
+            cursor += counter_size
 
             decoded = {
                 "event_io_id": event_io_id,
@@ -29,12 +33,32 @@ class IODecoder():
             }
 
             for group_name, value_size in (("n1", 1), ("n2", 2), ("n4", 4), ("n8", 8)):
-                count = record_bytes[cursor]
-                cursor += 1
-                decoded[group_name] = self.decode_group(record_bytes, cursor, count, value_size)
-                cursor += count * (1 + value_size)
+                count = self.read_uint(record_bytes, cursor, counter_size)
+                cursor += counter_size
+                group_decoded, cursor = self.decode_group(
+                    record_bytes,
+                    cursor,
+                    count,
+                    value_size,
+                    id_size,
+                )
+                decoded[group_name] = group_decoded
 
-            decoded_count = sum(len(decoded[group]) for group in ("n1", "n2", "n4", "n8"))
+            if is_extended:
+                nx_count = self.read_uint(record_bytes, cursor, counter_size)
+                cursor += counter_size
+                nx_decoded, cursor = self.decode_variable_group(
+                    record_bytes,
+                    cursor,
+                    nx_count,
+                    id_size,
+                    counter_size,
+                )
+                decoded["nx"] = nx_decoded
+            else:
+                decoded["nx"] = {}
+
+            decoded_count = sum(len(decoded[group]) for group in ("n1", "n2", "n4", "n8", "nx"))
             if decoded_count != total_io_count:
                 app_logger.log_system_event(
                     level="ERROR",
@@ -75,17 +99,40 @@ class IODecoder():
             )
             return -1, offset
 
-    def decode_group(self, record_bytes, offset, count, value_size):
+    def decode_group(self, record_bytes, offset, count, value_size, id_size):
         """Decodifica un gruppo I/O con valori di dimensione fissa."""
         decoded = {}
         cursor = offset
         for _ in range(count):
-            avl_id = record_bytes[cursor]
-            cursor += 1
+            avl_id = self.read_uint(record_bytes, cursor, id_size)
+            cursor += id_size
             value = int.from_bytes(record_bytes[cursor:cursor + value_size], byteorder="big", signed=False)
             cursor += value_size
             decoded[avl_id] = value
-        return decoded
+        return decoded, cursor
+
+    def decode_variable_group(self, record_bytes, offset, count, id_size, length_size):
+        """Decodifica il gruppo NX del Codec 8E con valori a lunghezza variabile."""
+        decoded = {}
+        cursor = offset
+        for _ in range(count):
+            avl_id = self.read_uint(record_bytes, cursor, id_size)
+            cursor += id_size
+            value_length = self.read_uint(record_bytes, cursor, length_size)
+            cursor += length_size
+            value_bytes = record_bytes[cursor:cursor + value_length]
+            if len(value_bytes) != value_length:
+                raise ValueError("Valore NX incompleto nel record Codec 8E.")
+            cursor += value_length
+            decoded[avl_id] = value_bytes.hex()
+        return decoded, cursor
+
+    def read_uint(self, record_bytes, offset, size):
+        """Legge un intero unsigned di dimensione fissa dal buffer indicato."""
+        value_bytes = record_bytes[offset:offset + size]
+        if len(value_bytes) != size:
+            raise ValueError("Buffer insufficiente durante la lettura dei campi I/O.")
+        return int.from_bytes(value_bytes, byteorder="big", signed=False)
 
     def dataDecoder(self, n_data):
         """Compatibilita' con il vecchio flusso: accetta bytes o stringa hex."""
