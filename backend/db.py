@@ -339,9 +339,9 @@ class TrackerRepository:
     def normalize_packet(self, raw_data):
         """Prepara i campi nel formato atteso dallo schema SQL."""
         named_io = self.id_to_avl(raw_data.get("io_data", {}))
-        flat_raw_io = self.flatten_raw_io(raw_data.get("io_data", {}))
         flat_named_io = self.flatten_named_io(named_io)
-        io_elements = self.build_io_elements(raw_data, flat_raw_io, flat_named_io)
+        flat_raw_io = self.flatten_raw_io(raw_data.get("io_data", {}))
+        io_elements = self.build_io_elements(raw_data, flat_named_io)
 
         return {
             "imei": raw_data["imei"],
@@ -409,8 +409,8 @@ class TrackerRepository:
             flattened[f"io_name_{normalized_name}"] = value
         return flattened
 
-    def build_io_elements(self, raw_data, flat_raw_io, flat_named_io):
-        """Costruisce l'oggetto JSONB piatto con tutti gli elementi AVL."""
+    def build_io_elements(self, raw_data, flat_named_io):
+        """Costruisce l'oggetto JSONB piatto con i campi AVL utili alla dashboard."""
         avl_fields = {
             "imei": raw_data.get("imei"),
             "sys_time": raw_data.get("sys_time"),
@@ -428,7 +428,6 @@ class TrackerRepository:
             "satellites": raw_data.get("satellites"),
             "speed": raw_data.get("speed"),
         }
-        avl_fields.update(flat_raw_io)
         avl_fields.update(flat_named_io)
         return avl_fields
 
