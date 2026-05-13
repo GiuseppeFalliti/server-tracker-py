@@ -350,8 +350,21 @@ class TrackerRepository:
     def normalize_packet(self, raw_data):
         """Prepara i campi nel formato atteso dallo schema SQL."""
         named_io = self.id_to_avl(raw_data.get("io_data", {}))
+        available_avl_ids = self.collect_available_avl_ids(raw_data.get("io_data", {}))
         filtered_parameters = self.extract_fmb150_parameters(raw_data.get("io_data", {}))
         io_elements = self.build_io_elements(raw_data, filtered_parameters)
+
+        app_logger.log_tracker_event(
+            imei=raw_data["imei"],
+            level="INFO",
+            event_type="tracker_avl_ids_received",
+            message="AVL ID ricevuti nel pacchetto tracker.",
+            component="db",
+            details={
+                "available_avl_ids": available_avl_ids,
+                "matched_whitelist_ids": [parameter["id"] for parameter in filtered_parameters],
+            },
+        )
 
         return {
             "imei": raw_data["imei"],
@@ -461,6 +474,14 @@ class TrackerRepository:
 
         filtered_parameters.sort(key=lambda parameter: parameter["id"])
         return filtered_parameters
+
+    def collect_available_avl_ids(self, io_data):
+        """Raccoglie tutti gli AVL ID presenti nel pacchetto, ordinati e senza duplicati."""
+        available_ids = set()
+        for group_values in io_data.values():
+            for raw_avl_id in group_values.keys():
+                available_ids.add(int(raw_avl_id))
+        return sorted(available_ids)
 
     def normalize_avl_value(self, avl_id, value):
         """Normalizza i valori AVL, decodificando stringhe ASCII quando possibile."""
