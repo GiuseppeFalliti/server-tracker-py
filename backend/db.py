@@ -24,15 +24,27 @@ from logger import app_logger
 load_dotenv()
 
 avl_match = avlIdMatcher()
-FMB150_AVL_WHITELIST = {
-    81: "Vehicle Speed",
-    84: "Fuel Level",
-    87: "Total Mileage",
-    105: "Total Mileage Counted",
-    107: "Fuel Consumed Counted",
-    325: "VIN",
-    387: "ISO6709 Coordinates",
-    866: "Remaining Distance",
+AVL_PARAMETER_METADATA = {
+    16: {"label": "Contachilometri Totale"},
+    21: {"label": "Potenza Segnale GSM"},
+    66: {"label": "Tensione Esterna", "dimension": "mV"},
+    67: {"label": "Tensione Batteria", "dimension": "mV"},
+    68: {"label": "Corrente Batteria", "dimension": "mA"},
+    69: {
+        "label": "Stato GNSS",
+        "value_human_map": {
+            0: "Nessun fix",
+            1: "Fix valido",
+            2: "Sleep",
+            3: "GNSS erroneo",
+        },
+    },
+    200: {"label": "Modalita Sleep"},
+    239: { "label": "Accensione", "value_human_map": {0: "No", 1: "Si"} },
+    240: { "label": "Movimento", "value_human_map": {0: "No", 1: "Si"} },
+    241: {"label": "Operatore GSM"},
+    325: {"label": "VIN"},
+    387: {"label": "Coordinate ISO6709"},
 }
 
 
@@ -351,8 +363,8 @@ class TrackerRepository:
         """Prepara i campi nel formato atteso dallo schema SQL."""
         named_io = self.id_to_avl(raw_data.get("io_data", {}))
         available_avl_ids = self.collect_available_avl_ids(raw_data.get("io_data", {}))
-        filtered_parameters = self.extract_fmb150_parameters(raw_data.get("io_data", {}))
-        io_elements = self.build_io_elements(raw_data, filtered_parameters)
+        decoded_parameters = self.extract_all_parameters(raw_data.get("io_data", {}))
+        io_elements = self.build_io_elements(raw_data, decoded_parameters)
 
         app_logger.log_tracker_event(
             imei=raw_data["imei"],
@@ -362,7 +374,7 @@ class TrackerRepository:
             component="db",
             details={
                 "available_avl_ids": available_avl_ids,
-                "matched_whitelist_ids": [parameter["id"] for parameter in filtered_parameters],
+                "decoded_parameter_ids": [parameter["id"] for parameter in decoded_parameters],
             },
         )
 
@@ -375,7 +387,7 @@ class TrackerRepository:
             "km": self.extract_km(named_io),
             "io_elements": io_elements,
             "has_raw_io": bool(raw_data.get("io_data", {})),
-            "has_named_io": bool(filtered_parameters),
+            "has_named_io": bool(decoded_parameters),
         }
 
     def resolve_packet_timestamp(self, raw_data):
@@ -432,8 +444,8 @@ class TrackerRepository:
             flattened[f"io_name_{normalized_name}"] = value
         return flattened
 
-    def build_io_elements(self, raw_data, filtered_parameters):
-        """Costruisce l'oggetto JSONB con GPS essenziale e whitelist AVL FMB150."""
+    def build_io_elements(self, raw_data, decoded_parameters):
+        """Costruisce l'oggetto JSONB con GPS essenziale e lista completa AVL."""
         return {
             "gps": {
                 "imei": raw_data.get("imei"),
@@ -452,28 +464,40 @@ class TrackerRepository:
                 "satellites": raw_data.get("satellites"),
                 "speed": raw_data.get("speed"),
             },
-            "parameters": filtered_parameters,
+            "parameters": decoded_parameters,
         }
 
-    def extract_fmb150_parameters(self, io_data):
-        """Estrae solo gli AVL ID FMB150 richiesti nel formato {id, name, value}."""
-        filtered_parameters = []
+    def extract_all_parameters(self, io_data):
+        """Estrae tutti gli AVL ID presenti nel pacchetto nel formato ricco per il DB."""
+        decoded_parameters = []
         for group_values in io_data.values():
             for raw_avl_id, raw_value in group_values.items():
                 avl_id = int(raw_avl_id)
-                if avl_id not in FMB150_AVL_WHITELIST:
-                    continue
+                decoded_parameters.append(self.build_parameter_entry(avl_id, raw_value))
 
-                filtered_parameters.append(
-                    {
-                        "id": avl_id,
-                        "name": FMB150_AVL_WHITELIST[avl_id],
-                        "value": self.normalize_avl_value(avl_id, raw_value),
-                    }
-                )
+        decoded_parameters.sort(key=lambda parameter: parameter["id"])
+        return decoded_parameters
 
-        filtered_parameters.sort(key=lambda parameter: parameter["id"])
-        return filtered_parameters
+    def build_parameter_entry(self, avl_id, raw_value):
+        """Costruisce una voce AVL comprensibile da salvare in io_elements.parameters."""
+        normalized_value = self.normalize_avl_value(avl_id, raw_value)
+        metadata = AVL_PARAMETER_METADATA.get(avl_id, {})
+        avl_info = avl_match.getAvlInfo(str(avl_id))
+        fallback_label = avl_info["name"] if isinstance(avl_info, dict) else f"AVL {avl_id}"
+        label = metadata.get("label") or fallback_label
+
+        parameter = {
+            "id": avl_id,
+            "label": label,
+            "value": normalized_value,
+            "valueHuman": self.humanize_avl_value(avl_id, normalized_value, metadata),
+        }
+
+        dimension = metadata.get("dimension")
+        if dimension:
+            parameter["dimension"] = dimension
+
+        return parameter
 
     def collect_available_avl_ids(self, io_data):
         """Raccoglie tutti gli AVL ID presenti nel pacchetto, ordinati e senza duplicati."""
@@ -502,6 +526,17 @@ class TrackerRepository:
             return value
 
         return decoded_value or value
+
+    def humanize_avl_value(self, avl_id, value, metadata):
+        """Restituisce una rappresentazione testuale del valore AVL quando disponibile."""
+        value_human_map = metadata.get("value_human_map", {})
+        if value in value_human_map:
+            return value_human_map[value]
+
+        if avl_id == 21:
+            return str(value)
+
+        return ""
 
     def normalize_io_key(self, value):
         """Rende stabili e sicure le chiavi dei campi I/O nominati."""
