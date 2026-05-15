@@ -180,7 +180,7 @@ class TrackerRepository:
     def serialize_vehicle_snapshot(self, row):
         """Normalizza una riga SQL nel formato JSON atteso dal frontend."""
         io_elements = row.get("io_elements") or {}
-        gps_data = io_elements.get("gps") if isinstance(io_elements, dict) else {}
+        gps_data = self.extract_gps_data(io_elements)
         speed = self.parse_numeric_value(gps_data.get("speed"))
         latitudine = float(row["latitudine"]) if row.get("latitudine") is not None else None
         longitudine = float(row["longitudine"]) if row.get("longitudine") is not None else None
@@ -199,6 +199,35 @@ class TrackerRepository:
             "station_id": row.get("station_id"),
             "model_id": row.get("model_id"),
         }
+
+    def extract_gps_data(self, io_elements):
+        """Recupera i dati GPS sia dal nuovo formato annidato sia da quello legacy."""
+        if not isinstance(io_elements, dict):
+            return {}
+
+        gps_data = io_elements.get("gps")
+        if isinstance(gps_data, dict):
+            return gps_data
+
+        # Fallback per record storici dove i campi GPS erano salvati al top level.
+        legacy_gps_keys = {
+            "imei",
+            "sys_time",
+            "codecid",
+            "no_record_i",
+            "no_record_e",
+            "crc-16",
+            "d_time_unix",
+            "d_time_local",
+            "priority",
+            "lon",
+            "lat",
+            "alt",
+            "angle",
+            "satellites",
+            "speed",
+        }
+        return {key: io_elements.get(key) for key in legacy_gps_keys if key in io_elements}
 
     def serialize_datetime(self, value):
         """Converte datetime Python in stringa ISO 8601."""
